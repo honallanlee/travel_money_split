@@ -79,6 +79,14 @@ ALTER TABLE transactions DROP CONSTRAINT IF EXISTS transactions_type_check;
 ALTER TABLE transactions ADD CONSTRAINT transactions_type_check
   CHECK (type IN ('CASH_DEPOSIT', 'CASH_EXPENSE', 'CARD_EXPENSE', 'CASH_PAYOUT', 'TRANSFER', 'REFUND'));
 
+-- Read-only trip guide (itinerary, hotels, notes) shown in the Guide tab. One row per trip.
+-- Booking references inside it are stripped by the API unless the viewer is in Treasurer Mode.
+CREATE TABLE IF NOT EXISTS trip_guides (
+  trip_id UUID PRIMARY KEY REFERENCES trips(id) ON DELETE CASCADE,
+  content JSONB NOT NULL,
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+
 -- Indexes for the per-trip lookups the app makes
 CREATE INDEX IF NOT EXISTS mini_groups_trip_idx ON mini_groups(trip_id);
 CREATE INDEX IF NOT EXISTS participants_trip_idx ON participants(trip_id);
@@ -97,3 +105,4 @@ ALTER TABLE transactions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE transaction_splits ENABLE ROW LEVEL SECURITY;
 ALTER TABLE budget_items ENABLE ROW LEVEL SECURITY;
 ALTER TABLE media ENABLE ROW LEVEL SECURITY;
+ALTER TABLE trip_guides ENABLE ROW LEVEL SECURITY;

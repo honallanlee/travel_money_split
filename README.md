@@ -1,4 +1,8 @@
-# Trip Kitty — Group Travel Expense & Cash Pool Splitter
+# Travel Hub
+
+One place for a group trip: the day-by-day itinerary and hotels, a shared cash kitty run by a
+Treasurer, split expenses and receipt scanning, family balances with a simple settle-up plan,
+budgets, analytics and photos — on everyone's phone, in English or 繁體中文.
 
 Mobile-first Next.js app for splitting group travel costs, running a shared physical cash
 kitty held by a Treasurer, settling up by family, scanning receipts with Gemini, and
@@ -28,6 +32,21 @@ so you can try it immediately. Add the Supabase keys to persist data.
   viewer types in. The choice is stored per browser and never changes the recorded data.
   The WhatsApp summary uses the viewer's display currency and notes the rate.
 - New expenses default to **Kitty cash** (paid from the Treasurer's cash pool).
+
+## Trip guide (Guide tab)
+
+A read-only itinerary for a trip — day-by-day plan, hotels, flights and before-you-go notes —
+shown in the **Guide** tab next to Planner. It is not edited in the app: the Treasurer loads a
+JSON file (format: `TripGuide` in `lib/types.ts`) with
+
+```bash
+curl -X PUT -H 'content-type: application/json' -b <treasurer cookie> \
+  --data-binary @guides/my-trip.json https://<site>/api/trips/<trip-id>/guide
+```
+
+Guides live in the database (`trip_guides`), **not in git** — `guides/` is git-ignored because
+itineraries contain names, flights and bookings. Lines under `private` (booking/confirmation
+numbers, login IDs) are only sent to viewers in Treasurer Mode.
 
 ## Photos, avatars, backups & language
 

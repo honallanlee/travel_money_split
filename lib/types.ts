@@ -135,3 +135,81 @@ export interface OcrResult {
   category: Category;
   line_items: { description: string; amount: number }[];
 }
+
+// ---------------------------------------------------------------------------
+// Trip guide (read-only itinerary shown in the Guide tab)
+// ---------------------------------------------------------------------------
+
+export type GuideItemKind = "flight" | "train" | "bus" | "walk" | "car" | "meal" | "activity" | "hotel" | "note";
+
+export interface GuideLink {
+  label: string;
+  url: string;
+}
+
+export interface GuideItem {
+  time?: string; // "09:00–14:05"
+  kind: GuideItemKind;
+  title: string;
+  detail?: string;
+  /** who this applies to, e.g. "Allan + Deborah" */
+  who?: string;
+  duration?: string;
+  /** cost per person in JPY */
+  cost?: number;
+  notes?: string[];
+  /** highlighted warning, e.g. "Closed on Thursday & Friday" */
+  alert?: string;
+  address?: string;
+  phone?: string;
+  links?: GuideLink[];
+  /** alternatives shown under "or" */
+  options?: GuideItem[];
+  /** booking refs, login IDs etc. — only sent to Treasurer Mode */
+  private?: string[];
+  /** set by the server when private lines were removed */
+  hasPrivate?: boolean;
+}
+
+export interface GuideDay {
+  day: number;
+  date: string; // YYYY-MM-DD
+  title: string;
+  /** key into GuideTrip.stays for that night */
+  stay?: string;
+  items: GuideItem[];
+}
+
+export interface GuideStay {
+  key: string;
+  name: string;
+  nights: string[]; // YYYY-MM-DD
+  address?: string;
+  phone?: string;
+  checkIn?: string;
+  checkOut?: string;
+  notes?: string[];
+  links?: GuideLink[];
+  private?: string[];
+  hasPrivate?: boolean;
+}
+
+export interface GuideNote {
+  title: string;
+  lines: string[];
+  /** key/value table, e.g. Visit Japan Web registration details */
+  table?: [string, string][];
+  links?: GuideLink[];
+}
+
+export interface TripGuide {
+  title: string;
+  subtitle?: string;
+  startDate: string;
+  endDate: string;
+  timezone?: string;
+  flights?: GuideItem[];
+  notes: GuideNote[];
+  days: GuideDay[];
+  stays: GuideStay[];
+}

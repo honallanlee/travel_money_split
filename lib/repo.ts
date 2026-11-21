@@ -2,7 +2,7 @@ import "server-only";
 import { bundleToBackup } from "./backup";
 import { getStore } from "./db/store";
 import { allocateCents, currencyDecimals, fromCents, round2, roundTo, splitByLineItems, splitEqually, splitSharesBetweenParts, toCents } from "./settlement";
-import type { BudgetItem, MediaItem, MiniGroup, Participant, Split, Transaction, Trip, TripBackup, TripBundle } from "./types";
+import type { BudgetItem, GuideItem, GuideStay, MediaItem, MiniGroup, Participant, Split, Transaction, Trip, TripBackup, TripBundle, TripGuide } from "./types";
 import * as v from "./validation";
 import { ValidationError } from "./validation";
 
@@ -560,7 +560,7 @@ export async function exportTrip(id: string): Promise<TripBackup> {
  */
 export async function importTrip(body: unknown): Promise<Trip> {
   const o = v.obj(body);
-  if (o.format !== "trip-kitty-backup" || o.version !== 1) throw new ValidationError("This isn't a Trip Kitty backup file");
+  if (o.format !== "trip-kitty-backup" || o.version !== 1) throw new ValidationError("This isn't a Travel Hub backup file");
   const src = o as unknown as TripBackup;
   for (const k of ["mini_groups", "participants", "transactions", "budget_items"] as const)
     if (!Array.isArray(src[k])) throw new ValidationError(`Backup is missing ${k}`);
@@ -602,4 +602,47 @@ export async function importTrip(body: unknown): Promise<Trip> {
     await deleteTrip(trip.id);
     throw e;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Trip guide (read-only itinerary)
+// ---------------------------------------------------------------------------
+
+/** Remove booking refs / login IDs for viewers who aren't in Treasurer Mode. */
+function redactGuide(g: TripGuide): TripGuide {
+  const item = (it: GuideItem): GuideItem => {
+    const { private: priv, options, ...rest } = it;
+    return { ...rest, hasPrivate: !!priv?.length, options: options?.map(item) };
+  };
+  const stay = (st: GuideStay): GuideStay => {
+    const { private: priv, ...rest } = st;
+    return { ...rest, hasPrivate: !!priv?.length };
+  };
+  return {
+    ...g,
+    flights: g.flights?.map(item),
+    days: g.days.map((d) => ({ ...d, items: d.items.map(item) })),
+    stays: g.stays.map(stay),
+  };
+}
+
+export async function getTripGuide(tripId: string, includePrivate: boolean): Promise<TripGuide | null> {
+  const [row] = await db().select<{ content: TripGuide }>("trip_guides", { trip_id: tripId }, "content");
+  if (!row) return null;
+  return includePrivate ? row.content : redactGuide(row.content);
+}
+
+export async function saveTripGuide(tripId: string, body: unknown): Promise<void> {
+  await getTrip(tripId);
+  const o = v.obj(body);
+  v.str(o.title, "title", { max: 200 });
+  if (!Array.isArray(o.days) || !Array.isArray(o.stays) || !Array.isArray(o.notes))
+    throw new ValidationError("Guide needs title, notes, days and stays");
+  if (JSON.stringify(o).length > 500_000) throw new ValidationError("Guide is too large");
+  await db().remove("trip_guides", { trip_id: tripId });
+  await db().insert("trip_guides", [{ trip_id: tripId, content: o, updated_at: new Date().toISOString() }]);
+}
+
+export async function deleteTripGuide(tripId: string) {
+  await db().remove("trip_guides", { trip_id: tripId });
 }

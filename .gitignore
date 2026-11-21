@@ -7,3 +7,6 @@ out
 next-env.d.ts
 .vercel
 .DS_Store
+
+# Private trip guides (itineraries with booking refs) — loaded into the database, never committed
+guides/

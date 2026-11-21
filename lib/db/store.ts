@@ -2,7 +2,7 @@ import "server-only";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { randomUUID } from "node:crypto";
 
-export type Table = "trips" | "mini_groups" | "participants" | "transactions" | "transaction_splits" | "budget_items" | "media";
+export type Table = "trips" | "mini_groups" | "participants" | "transactions" | "transaction_splits" | "budget_items" | "media" | "trip_guides";
 type Row = Record<string, unknown> & { id: string };
 /** Equality filter; an array value means `IN (...)`. */
 export type Where = Record<string, string | string[]>;
@@ -72,6 +72,7 @@ const FKS: Record<Table, FkRule[]> = {
     { table: "transactions", column: "trip_id", onDelete: "cascade" },
     { table: "budget_items", column: "trip_id", onDelete: "cascade" },
     { table: "media", column: "trip_id", onDelete: "cascade" },
+    { table: "trip_guides", column: "trip_id", onDelete: "cascade" },
   ],
   mini_groups: [{ table: "participants", column: "mini_group_id", onDelete: "set null" }],
   participants: [
@@ -83,6 +84,7 @@ const FKS: Record<Table, FkRule[]> = {
   transaction_splits: [],
   budget_items: [],
   media: [{ table: "participants", column: "avatar_media_id", onDelete: "set null" }],
+  trip_guides: [],
 };
 
 const DEFAULTS: Partial<Record<Table, () => Record<string, unknown>>> = {
@@ -115,6 +117,7 @@ class MemoryStore implements Store {
       transaction_splits: [],
       budget_items: [],
       media: [],
+      trip_guides: [],
     };
     // Tables added after the store was created (e.g. during hot reload) start empty.
     for (const t of Object.keys(FKS) as Table[]) g.__tms_memory[t] ??= [];

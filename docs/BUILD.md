@@ -1,6 +1,6 @@
-# Trip Kitty — Build Document
+# Travel Hub — Build Document
 
-Group travel expense & cash-pool splitter. Mobile-first web app for a group trip (default
+Travel Hub (formerly Trip Kitty): group trip itinerary, expense & cash-pool app. Mobile-first web app for a group trip (default
 currency **Japanese yen**): log shared spending, run a physical cash kitty held by a
 Treasurer, settle up by family, scan receipts with AI, track budget vs. actual, share
 photos, and switch between **English and Traditional Chinese (繁體中文)**.
@@ -137,6 +137,7 @@ restart). Tap **Load Demo Trip Data** on the home page to get a sample Japan tri
 | **Photos** | Traveller avatars (tap a face to upload) and a trip photo gallery with captions. |
 | **Analytics** | Total cost, average per day, average per person, cash-vs-card split; spend by category (bars or table); cumulative / daily spend trend. |
 | **Planner** | Budget per category vs. actual, progress bars with *NEAR LIMIT* / *OVER* flags, unbudgeted spending; Treasurer edits planned amounts and notes. |
+| **Guide** | Read-only trip guide: day-by-day itinerary (opens on today during the trip), hotels, flights and before-you-go notes, with map and phone links. Only shown when the trip has a guide. Booking references appear only in Treasurer Mode. |
 
 ### Adding money (Treasurer, floating **+ Add** button)
 - **Log Expense** — opens on **Kitty cash** by default (paid from the Treasurer's cash
@@ -311,6 +312,7 @@ Categories: Food & Drink, Transport, Accommodation, Flights, Activities, Shoppin
 | `/api/media/[id]` | PUT / DELETE | 🔒 | Edit caption / delete |
 | `/api/rates?base=JPY` | GET | 🔓 | Live reference exchange rates (cached 6 h) |
 | `/api/transactions/split-payment` | POST | 🔒 | One bill, part kitty cash + part card (two linked expenses) |
+| `/api/trips/[id]/guide` | GET 🔓 / PUT, DELETE 🔒 | Trip guide (private lines only for the Treasurer) |
 | `/api/keepalive` | GET | 🔓 (or `CRON_SECRET`) | Daily ping so Supabase Free doesn't pause |
 | `/api/demo` | POST | 🔓 if empty, else 🔒 | Seed the Japan demo trip |
 
@@ -431,6 +433,9 @@ real photos from a phone's photo picker.
 5. **Supabase go-live** — tables created, clearer "tables not found" error.
 6. **OCR fix** — retired `gemini-2.5-flash` replaced by Flash-Lite with fallbacks and timeouts.
 7. **Group deposits** — "Everyone, same amount" is the default cash-deposit mode.
+10. **Travel Hub + Guide tab** — renamed app; read-only trip guide stored in `trip_guides`
+    (not in git), served by `GET /api/trips/[id]/guide` with private lines stripped for
+    non-Treasurers; loaded with `PUT` from a git-ignored JSON file.
 9. **Settle-ups, refunds, split payments, delete button, keep-alive** — new `TRANSFER` and
    `REFUND` types, `POST /api/transactions/split-payment`, Delete in the feed, daily
    `/api/keepalive` Vercel Cron, and an example trip covering every scenario.

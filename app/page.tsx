@@ -1,5 +1,5 @@
 "use client";
-import { ChevronRight, Database, Lock, LockOpen, Plane, Plus, Sparkles } from "lucide-react";
+import { ChevronRight, Database, Lock, LockOpen, Map as MapIcon, Plane, Plus, ReceiptText, Scale, Sparkles, Wallet } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
@@ -64,8 +64,8 @@ export default function Home() {
             <Plane className="h-5 w-5" />
           </div>
           <div>
-            <h1 className="text-lg font-bold leading-tight">Trip Kitty</h1>
-            <p className="text-xs text-ink-3">{t("Group travel expenses & cash pool")}</p>
+            <h1 className="text-lg font-bold leading-tight">Travel Hub</h1>
+            <p className="text-xs text-ink-3">{t("Your group trip, all in one place")}</p>
           </div>
         </div>
         <div className="flex items-center gap-1.5">
@@ -88,6 +88,27 @@ export default function Home() {
         </div>
       )}
       {err && <p className="mb-4 rounded-xl bg-red-50 p-3 text-sm text-neg">{err}</p>}
+
+      <Card className="mb-2 p-4">
+        <p className="text-sm leading-relaxed text-ink-2">
+          {t("Travel Hub keeps everything for your group trip in one place — share the trip link and everyone can follow along on their phone.")}
+        </p>
+        <ul className="mt-3 grid grid-cols-2 gap-2 text-xs">
+          {(
+            [
+              [MapIcon, "Day-by-day itinerary, hotels & travel notes"],
+              [Wallet, "Shared cash kitty run by the Treasurer"],
+              [ReceiptText, "Split expenses & scan receipts"],
+              [Scale, "Family balances & a simple settle-up plan"],
+            ] as const
+          ).map(([Icon, text]) => (
+            <li key={text} className="flex items-start gap-2 rounded-xl bg-stone-50 p-2">
+              <Icon className="mt-px h-4 w-4 shrink-0 text-brand" />
+              <span className="text-ink-2">{t(text)}</span>
+            </li>
+          ))}
+        </ul>
+      </Card>
 
       <SectionTitle>{t("Trips")}</SectionTitle>
       {trips === null ? (

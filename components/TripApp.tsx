@@ -10,6 +10,7 @@ import {
   Undo2,
   Database,
   Images,
+  Map as MapIcon,
   ListOrdered,
   Lock,
   LockOpen,
@@ -25,11 +26,12 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, ApiError } from "@/lib/client";
 import { useT } from "@/lib/i18n";
 import { computeLedger } from "@/lib/settlement";
-import type { Transaction, TripBundle, TxType } from "@/lib/types";
+import type { Transaction, TripBundle, TripGuide, TxType } from "@/lib/types";
 import AnalyticsTab from "./AnalyticsTab";
 import BalancesTab from "./BalancesTab";
 import { DisplayCurrencyChip, DisplayCurrencyProvider, useDisplay } from "./DisplayCurrency";
 import FeedTab from "./FeedTab";
+import GuideTab from "./GuideTab";
 import PeopleModal from "./PeopleModal";
 import PhotosTab from "./PhotosTab";
 import PlannerTab from "./PlannerTab";
@@ -39,13 +41,14 @@ import { cx, Toast } from "./ui";
 import UnlockModal from "./UnlockModal";
 import { useTreasurer } from "./useTreasurer";
 
-type Tab = "feed" | "balances" | "photos" | "analytics" | "planner";
+type Tab = "feed" | "balances" | "photos" | "analytics" | "planner" | "guide";
 const TABS: { id: Tab; label: string; icon: typeof Receipt }[] = [
   { id: "feed", label: "Feed", icon: ListOrdered },
   { id: "balances", label: "Settle", icon: Scale },
   { id: "photos", label: "Photos", icon: Images },
   { id: "analytics", label: "Analytics", icon: BarChart3 },
   { id: "planner", label: "Planner", icon: Target },
+  { id: "guide", label: "Guide", icon: MapIcon },
 ];
 
 export type RunMutation = (fn: () => Promise<unknown>, success?: string) => Promise<boolean>;
@@ -53,6 +56,7 @@ export type LoadedBundle = TripBundle & { storage?: string };
 type Offline = { savedAt: string } | null;
 
 const cacheKey = (id: string) => `tms:cache:${id}`;
+const guideCacheKey = (id: string) => `tms:guide:${id}`;
 
 export default function TripApp({ tripId }: { tripId: string }) {
   const tr = useTreasurer();
@@ -67,6 +71,33 @@ export default function TripApp({ tripId }: { tripId: string }) {
   const [showMenu, setShowMenu] = useState(false);
   const [fabOpen, setFabOpen] = useState(false);
   const [txModal, setTxModal] = useState<TxModalState | null>(null);
+  const [guide, setGuide] = useState<TripGuide | null>(null);
+
+  // Read-only trip guide (itinerary). Re-fetched when Treasurer Mode changes, since booking
+  // references are only included for the Treasurer. Kept on the device for offline use.
+  useEffect(() => {
+    let cancelled = false;
+    api<{ guide: TripGuide | null }>(`/api/trips/${tripId}/guide`)
+      .then((r) => {
+        if (cancelled) return;
+        setGuide(r.guide);
+        try {
+          if (r.guide) localStorage.setItem(guideCacheKey(tripId), JSON.stringify(r.guide));
+          else localStorage.removeItem(guideCacheKey(tripId));
+        } catch {}
+      })
+      .catch(() => {
+        try {
+          const cached = localStorage.getItem(guideCacheKey(tripId));
+          if (!cancelled && cached) setGuide(JSON.parse(cached));
+        } catch {}
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [tripId, tr.unlocked]);
+
+  const visibleTabs = TABS.filter((x) => x.id !== "guide" || guide);
 
   /**
    * Loads the trip and keeps a copy on this device. If the server or database is
@@ -231,6 +262,8 @@ export default function TripApp({ tripId }: { tripId: string }) {
           {tab === "photos" && <PhotosTab bundle={bundle} unlocked={canEdit} offline={!!offline} run={run} />}
           {tab === "analytics" && <AnalyticsTab bundle={bundle} />}
           {tab === "planner" && <PlannerTab bundle={bundle} unlocked={canEdit} run={run} />}
+          {tab === "guide" && guide && <GuideTab guide={guide} unlocked={tr.unlocked} />}
+          {tab === "guide" && !guide && <PlannerTab bundle={bundle} unlocked={canEdit} run={run} />}
         </main>
 
         {/* Floating add button (Treasurer Mode) */}
@@ -272,12 +305,16 @@ export default function TripApp({ tripId }: { tripId: string }) {
         )}
 
         <nav className="fixed inset-x-0 bottom-0 z-30 border-t border-line bg-surface/95 pb-[env(safe-area-inset-bottom)] backdrop-blur">
-          <div className="mx-auto grid max-w-md grid-cols-5">
-            {TABS.map(({ id, label, icon: Icon }) => (
+          <div className={cx("mx-auto grid max-w-md", visibleTabs.length === 6 ? "grid-cols-6" : "grid-cols-5")}>
+            {visibleTabs.map(({ id, label, icon: Icon }) => (
               <button
                 key={id}
                 onClick={() => selectTab(id)}
-                className={cx("flex flex-col items-center gap-0.5 py-2.5 text-[11px] font-medium", tab === id ? "text-brand" : "text-ink-3")}
+                className={cx(
+                  "flex min-w-0 flex-col items-center gap-0.5 py-2.5 font-medium",
+                  visibleTabs.length === 6 ? "text-[10px]" : "text-[11px]",
+                  tab === id ? "text-brand" : "text-ink-3",
+                )}
                 aria-current={tab === id ? "page" : undefined}
               >
                 <Icon className="h-5 w-5" />
