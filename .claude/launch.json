@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "dev",
+      "runtimeExecutable": "/Users/allanlee/.local/node/bin/npm",
+      "runtimeArgs": ["run", "dev"],
+      "env": { "PATH": "/Users/allanlee/.local/node/bin:/usr/bin:/bin:/usr/sbin:/sbin", "NEXT_TELEMETRY_DISABLED": "1" },
+      "port": 3000
+    }
+  ]
+}

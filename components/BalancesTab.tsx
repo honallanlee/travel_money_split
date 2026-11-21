@@ -1,0 +1,184 @@
+"use client";
+import { ArrowRight, Check, ChevronDown, Copy, Share2, Wallet } from "lucide-react";
+import { useState } from "react";
+import { formatWhatsAppSummary, KITTY_ID, type Ledger, type SettlementEntity } from "@/lib/settlement";
+import type { TripBundle } from "@/lib/types";
+import { useT } from "@/lib/i18n";
+import { useDisplay } from "./DisplayCurrency";
+import { Avatar, Button, Card, cx, Money, SectionTitle } from "./ui";
+
+export default function BalancesTab({ bundle, ledger, onCopied }: { bundle: TripBundle; ledger: Ledger; onCopied: () => void }) {
+  const cur = bundle.trip.base_currency;
+  const [copied, setCopied] = useState(false);
+  const d = useDisplay();
+  const { t } = useT();
+  const kittyName = ledger.treasurerName ? t("Cash Kitty ({name})", { name: ledger.treasurerName }) : t("Cash Kitty");
+  const partyName = (id: string, name: string) => (id === KITTY_ID ? kittyName : name);
+  const summary = formatWhatsAppSummary(bundle.trip.name, cur, ledger, {
+    fmt: d.fmt,
+    t,
+    partyName,
+    note: d.converted
+      ? t("Amounts in {code} at 1 {base} = {rate} {code} (recorded in {base})", { code: d.code, base: d.base, rate: d.rate.toPrecision(4) })
+      : undefined,
+  });
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(summary);
+    } catch {
+      const ta = document.createElement("textarea");
+      ta.value = summary;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      ta.remove();
+    }
+    setCopied(true);
+    onCopied();
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const sorted = [...ledger.entities].sort((a, b) => b.net - a.net);
+
+  return (
+    <div>
+      <SectionTitle>{t("Families & travellers")}</SectionTitle>
+      {sorted.length === 0 && <Card className="p-6 text-center text-sm text-ink-2">{t("No travellers yet.")}</Card>}
+      <div className="space-y-2">
+        {sorted.map((e) => (
+          <EntityCard key={e.id} entity={e} bundle={bundle} ledger={ledger} />
+        ))}
+        {Math.abs(ledger.pool.balance) >= 0.01 && (
+          <Card className="flex items-center gap-3 p-3">
+            <div className="grid h-10 w-10 place-items-center rounded-xl bg-teal-50 text-brand">
+              <Wallet className="h-5 w-5" />
+            </div>
+            <div className="flex-1">
+              <p className="text-sm font-semibold">{t("Cash kitty")}</p>
+              <p className="text-xs text-ink-3">
+                {ledger.pool.balance > 0 ? t("Unspent cash to return") : t("Kitty is overdrawn")}
+                {ledger.treasurerName && ` · ${t("held by {name}", { name: ledger.treasurerName })}`}
+              </p>
+            </div>
+            <Money amount={ledger.pool.balance} className="text-sm font-semibold" />
+          </Card>
+        )}
+      </div>
+
+      <SectionTitle>{t("Settlement plan")}</SectionTitle>
+      <Card className="overflow-hidden">
+        {ledger.transfers.length === 0 ? (
+          <p className="flex items-center justify-center gap-2 p-6 text-sm text-pos">
+            <Check className="h-4 w-4" /> {t("Everyone is square")}
+          </p>
+        ) : (
+          <ol className="divide-y divide-line">
+            {ledger.transfers.map((x, i) => (
+              <li key={i} className="flex items-center gap-2 px-3 py-3 text-sm">
+                <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-stone-100 text-xs font-semibold text-ink-2">{i + 1}</span>
+                <span className={cx("min-w-0 flex-1", x.from_id === KITTY_ID && "italic")}>
+                  <span className="font-semibold">{partyName(x.from_id, x.from_name)}</span>
+                  <ArrowRight className="mx-1 inline h-3.5 w-3.5 text-ink-3" />
+                  <span className="font-semibold">{partyName(x.to_id, x.to_name)}</span>
+                </span>
+                <Money amount={x.amount} className="font-bold" />
+              </li>
+            ))}
+          </ol>
+        )}
+        <div className="flex gap-2 border-t border-line p-3">
+          <Button className="flex-1" onClick={copy}>
+            {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+            {copied ? t("Copied") : t("Copy Summary for WhatsApp")}
+          </Button>
+          <a
+            href={`https://wa.me/?text=${encodeURIComponent(summary)}`}
+            target="_blank"
+            rel="noreferrer"
+            className="grid place-items-center rounded-xl px-3 ring-1 ring-line"
+            aria-label={t("Open in WhatsApp")}
+          >
+            <Share2 className="h-4 w-4 text-ink-2" />
+          </a>
+        </div>
+      </Card>
+      <p className="mt-2 px-1 text-xs text-ink-3">
+        {t("Payments are minimised by pairing the biggest debtor with the biggest creditor. Family members are settled as one unit.")}
+      </p>
+    </div>
+  );
+}
+
+function EntityCard({
+  entity: e,
+  bundle,
+  ledger,
+}: {
+  entity: SettlementEntity;
+  bundle: TripBundle;
+  ledger: Ledger;
+}) {
+  const [open, setOpen] = useState(false);
+  const { t } = useT();
+  const square = Math.abs(e.net) < 0.01;
+  const members = e.member_ids.map((id) => ({ p: bundle.participants.find((x) => x.id === id)!, b: ledger.balances[id] }));
+
+  return (
+    <Card className="overflow-hidden">
+      <button onClick={() => setOpen((o) => !o)} className="flex w-full items-center gap-3 p-3 text-left" aria-expanded={open}>
+        <div className="flex w-12 shrink-0 -space-x-3">
+          {members.slice(0, 3).map((m) => (
+            <Avatar key={m.p.id} person={m.p} size={members.length > 1 ? 30 : 40} />
+          ))}
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-semibold">{e.name}</p>
+          <p className="truncate text-xs text-ink-3">{e.kind === "group" ? members.map((m) => m.p.name).join(", ") : t("Solo traveller")}</p>
+        </div>
+        <div className="text-right">
+          <Money amount={e.net} signed className={cx("text-sm font-bold", square ? "text-ink-3" : e.net > 0 ? "text-pos" : "text-neg")} />
+          <p className="text-[11px] text-ink-3">{square ? t("settled") : e.net > 0 ? t("is owed") : t("owes")}</p>
+        </div>
+        <ChevronDown className={cx("h-4 w-4 text-ink-3 transition", open && "rotate-180")} />
+      </button>
+      {open && (
+        <div className="border-t border-line bg-stone-50 px-3 py-2">
+          <table className="w-full text-xs">
+            <thead className="text-ink-3">
+              <tr>
+                <th className="py-1 text-left font-medium">{t("Person")}</th>
+                <th className="py-1 text-right font-medium">{t("Cash in")}</th>
+                <th className="py-1 text-right font-medium">{t("Card paid")}</th>
+                <th className="py-1 text-right font-medium">{t("Share")}</th>
+                <th className="py-1 text-right font-medium">{t("Net")}</th>
+              </tr>
+            </thead>
+            <tbody className="tabular">
+              {members.map(({ p, b }) => (
+                <tr key={p.id} className="border-t border-line/70">
+                  <td className="py-1.5 font-medium">
+                    {p.name}
+                    {p.is_treasurer && <span className="ml-1 text-[10px] text-brand">★</span>}
+                  </td>
+                  <td className="text-right">
+                    <Money amount={b.deposits} />
+                  </td>
+                  <td className="text-right">
+                    <Money amount={b.card_paid} />
+                  </td>
+                  <td className="text-right">
+                    <Money amount={-b.shares} />
+                  </td>
+                  <td className={cx("text-right font-semibold", b.net > 0.004 ? "text-pos" : b.net < -0.004 ? "text-neg" : "")}>
+                    <Money amount={b.net} signed />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Card>
+  );
+}
