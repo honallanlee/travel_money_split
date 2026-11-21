@@ -2,13 +2,15 @@
 import { AlertTriangle, Camera, Loader2, Plus, ScanLine, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError, compressImage } from "@/lib/client";
-import { currencyDecimals, formatMoney, round2, roundTo, splitByLineItems, splitByWeights, splitEqually, toCents } from "@/lib/settlement";
+import { computeLedger, currencyDecimals, formatMoney, round2, roundTo, splitByLineItems, splitByWeights, splitEqually, toCents } from "@/lib/settlement";
 import { CATEGORIES, CURRENCIES, type OcrResult, type Split, type Transaction, type TripBundle, type TxType } from "@/lib/types";
 import { useT } from "@/lib/i18n";
 import type { RunMutation } from "./TripApp";
 import { Button, cx, Field, inputBase, inputCls, Modal } from "./ui";
 
-export type TxModalState = { mode: "new"; type: TxType; scanFile?: File } | { mode: "edit"; tx: Transaction };
+/** Pre-filled values, e.g. from a "Record payment" button on the settlement plan. */
+export type TxPrefill = { amount?: number; personId?: string; receiverId?: string; title?: string; singleDeposit?: boolean };
+export type TxModalState = { mode: "new"; type: TxType; scanFile?: File; prefill?: TxPrefill } | { mode: "edit"; tx: Transaction };
 type SplitMode = "equal" | "custom" | "items";
 type ItemDraft = { key: number; description: string; amount: string; assignees: string[] };
 
@@ -16,6 +18,9 @@ const TYPE_OPTIONS: { type: TxType; label: string; hint: string }[] = [
   { type: "CASH_EXPENSE", label: "Kitty cash", hint: "Treasurer paid from the cash pool (default)" },
   { type: "CARD_EXPENSE", label: "Card", hint: "Someone paid by card / transfer — they get credited" },
   { type: "CASH_DEPOSIT", label: "Deposit", hint: "Cash handed to the Treasurer" },
+  { type: "CASH_PAYOUT", label: "Payout", hint: "Kitty cash handed to someone — paying them back, or settling up" },
+  { type: "TRANSFER", label: "Settle-up", hint: "One person paid another directly (cash, bank transfer, PayPay…) — the kitty isn't involved" },
+  { type: "REFUND", label: "Refund", hint: "Money back from a shop — shares are given back to the people who paid" },
 ];
 
 let itemKey = 0;
@@ -26,14 +31,15 @@ function initialState(state: TxModalState, bundle: TripBundle) {
   const everyone = bundle.participants.map((p) => p.id);
   const treasurer = bundle.participants.find((p) => p.is_treasurer)?.id ?? bundle.participants[0]?.id ?? "";
   if (state.mode === "new") {
+    const pre = state.prefill ?? {};
     return {
       type: state.type,
-      title: "",
+      title: pre.title ?? "",
       category: "Food & Drink" as string,
-      amount: "",
+      amount: pre.amount ? String(pre.amount) : "",
       currency: base,
       rate: "1",
-      paidBy: treasurer,
+      paidBy: pre.personId ?? treasurer,
       date: today(),
       mode: "equal" as SplitMode,
       selected: everyone,
@@ -105,8 +111,31 @@ export default function TransactionModal({
   const scannedOnce = useRef(false);
 
   const isDeposit = type === "CASH_DEPOSIT";
+  const isPayout = type === "CASH_PAYOUT";
+  const isSettle = type === "TRANSFER";
+  const isRefund = type === "REFUND";
+  /** Deposits, payouts and settle-ups only move money between people: no category, receipt or split. */
+  const isTransfer = isDeposit || isPayout || isSettle;
+  const isSpend = type === "CASH_EXPENSE" || type === "CARD_EXPENSE";
+  // Settle-up receiver; refund recipient ("" = cash back into the kitty).
+  const [receiver, setReceiver] = useState<string>(() =>
+    state.mode === "edit"
+      ? (state.tx.type === "TRANSFER" ? state.tx.splits[0]?.participant_id : "") ?? ""
+      : state.prefill?.receiverId ?? people.find((p) => p.id !== init.paidBy)?.id ?? "",
+  );
+  const [refundTo, setRefundTo] = useState<string>(() =>
+    state.mode === "edit" && state.tx.type === "REFUND" ? state.tx.paid_by_participant_id ?? "" : "",
+  );
+  // Split payment: part kitty cash, part someone's card (new expenses only).
+  const [splitPay, setSplitPay] = useState(false);
+  const [cardPart, setCardPart] = useState("");
+  const [cardPayer, setCardPayer] = useState<string>(() => people.find((p) => !p.is_treasurer)?.id ?? people[0]?.id ?? "");
   // New deposits default to "everyone puts in the same amount"; editing an existing deposit is always one person.
-  const [depositMode, setDepositMode] = useState<"everyone" | "single">(state.mode === "new" ? "everyone" : "single");
+  const [depositMode, setDepositMode] = useState<"everyone" | "single">(
+    state.mode === "new" && !state.prefill?.singleDeposit ? "everyone" : "single",
+  );
+  // Current balances, to show how much a payout recipient is owed.
+  const ledger = useMemo(() => computeLedger(bundle), [bundle]);
   const [depositors, setDepositors] = useState<string[]>(() => people.map((p) => p.id));
   const groupDeposit = isDeposit && depositMode === "everyone";
   const foreign = currency !== base;
@@ -167,7 +196,7 @@ export default function TransactionModal({
 
   // ---- split preview ------------------------------------------------------
   const splitResult = useMemo((): { splits: Split[]; problem: string | null; note?: string } => {
-    if (isDeposit) return { splits: [], problem: null };
+    if (isTransfer) return { splits: [], problem: null };
     if (amountBase <= 0) return { splits: [], problem: t("Enter an amount") };
     if (mode === "equal") {
       if (selected.length === 0) return { splits: [], problem: t("Pick at least one person") };
@@ -211,12 +240,12 @@ export default function TransactionModal({
     if (unassignedAmount > 0)
       return { splits, problem: t("{amount} of items not assigned to anyone", { amount: formatMoney(unassignedAmount, currency) }), note };
     return { splits, problem: null, note };
-  }, [isDeposit, amountBase, amountLocal, mode, selected, custom, items, people, currency, baseDec, t]);
+  }, [isTransfer, amountBase, amountLocal, mode, selected, custom, items, people, currency, baseDec, t]);
 
   const formProblem =
     people.length === 0
       ? t("Add travellers first (Menu → Trip & travellers)")
-      : !isDeposit && !title.trim()
+      : !isTransfer && !title.trim()
         ? t("Add a description")
         : amountLocal <= 0
           ? t("Enter an amount")
@@ -224,9 +253,13 @@ export default function TransactionModal({
             ? t("Enter the exchange rate")
             : groupDeposit && depositors.length === 0
               ? t("Pick at least one person")
-              : (type !== "CASH_EXPENSE" && !groupDeposit && !paidBy)
+              : (type !== "CASH_EXPENSE" && !isRefund && !groupDeposit && !(isSpend && splitPay) && !paidBy)
                 ? t("Choose who paid")
-                : splitResult.problem;
+                : isSettle && (!receiver || receiver === paidBy)
+                  ? t("Choose who received the payment")
+                  : isSpend && splitPay && !(Number(cardPart) > 0 && Number(cardPart) < amountLocal)
+                    ? t("The card part must be less than the total")
+                    : splitResult.problem;
   const depositorIds = people.map((p) => p.id).filter((id) => depositors.includes(id));
   const totalBase = groupDeposit ? amountBase * depositorIds.length : amountBase;
 
@@ -235,7 +268,7 @@ export default function TransactionModal({
     setSaving(true);
     setError(null);
     const lineItems =
-      !isDeposit && items.length
+      !isTransfer && items.length
         ? items
             .filter((i) => i.description.trim() || Number(i.amount))
             .map((i) => ({ description: i.description.trim() || "Item", amount: Number(i.amount) || 0, assignees: mode === "items" ? i.assignees : [] }))
@@ -243,17 +276,31 @@ export default function TransactionModal({
     const payload = {
       trip_id: bundle.trip.id,
       type,
-      title: title.trim() || (isDeposit ? t("Cash deposit") : ""),
+      title:
+        title.trim() ||
+        (isDeposit ? t("Cash deposit") : isPayout ? t("Paid from kitty") : isSettle ? t("Settle-up payment") : isRefund ? t("Refund") : ""),
       category,
       amount_local: amountLocal,
       currency,
       exchange_rate_to_base: rateNum,
-      paid_by_participant_id: type === "CASH_EXPENSE" ? null : paidBy,
+      paid_by_participant_id: type === "CASH_EXPENSE" ? null : isRefund ? refundTo || null : paidBy,
       occurred_at: date,
       line_items: lineItems,
-      splits: splitResult.splits,
+      splits: isSettle ? [{ participant_id: receiver, share_amount_base: amountBase }] : splitResult.splits,
     };
-    const ok = groupDeposit
+    const ok = isSpend && splitPay && state.mode === "new"
+      ? await run(
+          () =>
+            api("/api/transactions/split-payment", "POST", {
+              ...payload,
+              card_amount_local: Number(cardPart),
+              card_paid_by_participant_id: cardPayer,
+              title_kitty: `${payload.title} (${t("kitty part")})`,
+              title_card: `${payload.title} (${t("card part")})`,
+            }),
+          "Split payment logged",
+        )
+      : groupDeposit
       ? await run(
           () =>
             api("/api/transactions/deposits", "POST", {
@@ -270,7 +317,17 @@ export default function TransactionModal({
       : await run(
           () =>
             state.mode === "edit" ? api(`/api/transactions/${state.tx.id}`, "PUT", payload) : api("/api/transactions", "POST", payload),
-          state.mode === "edit" ? "Saved" : isDeposit ? "Deposit logged" : "Expense logged",
+          state.mode === "edit"
+            ? "Saved"
+            : isDeposit
+              ? "Deposit logged"
+              : isPayout
+                ? "Payout logged"
+                : isSettle
+                  ? "Settle-up logged"
+                  : isRefund
+                    ? "Refund logged"
+                    : "Expense logged",
         );
     setSaving(false);
     if (ok) onClose();
@@ -289,7 +346,19 @@ export default function TransactionModal({
     <Modal
       open
       onClose={onClose}
-      title={state.mode === "edit" ? t("Edit transaction") : isDeposit ? t("Log cash deposit") : t("Log expense")}
+      title={
+        state.mode === "edit"
+          ? t("Edit transaction")
+          : isDeposit
+            ? t("Log cash deposit")
+            : isPayout
+              ? t("Pay out from kitty")
+              : isSettle
+                ? t("Record settle-up payment")
+                : isRefund
+                  ? t("Log refund")
+                  : t("Log expense")
+      }
       footer={
         <div className="space-y-2">
           {error && <p className="text-sm text-neg">{error}</p>}
@@ -316,7 +385,7 @@ export default function TransactionModal({
               role="radio"
               aria-checked={type === o.type}
               onClick={() => setType(o.type)}
-              className={cx("rounded-lg px-2 py-2 text-xs font-semibold", type === o.type ? "bg-surface shadow-sm" : "text-ink-2")}
+              className={cx("rounded-lg px-1 py-2 text-[11px] font-semibold leading-tight", type === o.type ? "bg-surface shadow-sm" : "text-ink-2")}
             >
               {t(o.label)}
             </button>
@@ -325,7 +394,7 @@ export default function TransactionModal({
         <p className="-mt-2 text-xs text-ink-3">{t(TYPE_OPTIONS.find((o) => o.type === type)!.hint)}</p>
 
         {/* Receipt scan */}
-        {!isDeposit && (
+        {!isTransfer && (
           <div className="rounded-2xl bg-surface p-3 ring-1 ring-line">
             <div className="flex items-center gap-3">
               {preview ? (
@@ -360,8 +429,23 @@ export default function TransactionModal({
           </div>
         )}
 
-        <Field label={isDeposit ? t("Note") : t("Description")}>
-          <input className={inputCls} value={title} onChange={(e) => setTitle(e.target.value)} placeholder={isDeposit ? t("Cash deposit") : t("Dinner at…")} />
+        <Field label={isTransfer ? t("Note") : t("Description")}>
+          <input
+            className={inputCls}
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder={
+              isDeposit
+                ? t("Cash deposit")
+                : isPayout
+                  ? t("Paid from kitty")
+                  : isSettle
+                    ? t("Settle-up payment")
+                    : isRefund
+                      ? t("Refund for…")
+                      : t("Dinner at…")
+            }
+          />
         </Field>
 
         <div className="grid grid-cols-[1fr_6.5rem] gap-2">
@@ -402,8 +486,15 @@ export default function TransactionModal({
           </Field>
         )}
 
+        {isSpend && state.mode === "new" && (
+          <label className="flex items-center gap-2.5 rounded-xl bg-surface px-3 py-2.5 text-sm ring-1 ring-line">
+            <input type="checkbox" className="h-5 w-5 accent-teal-700" checked={splitPay} onChange={(e) => setSplitPay(e.target.checked)} />
+            <span className="flex-1">{t("Paid partly with kitty cash, partly by card")}</span>
+          </label>
+        )}
+
         <div className="grid grid-cols-2 gap-2">
-          {!isDeposit && (
+          {!isTransfer && (
             <Field label={t("Category")}>
               <select className={inputCls} value={category} onChange={(e) => setCategory(e.target.value)}>
                 {[...new Set([...CATEGORIES, category])].map((c) => (
@@ -475,24 +566,74 @@ export default function TransactionModal({
               </p>
             )}
           </div>
-        ) : type !== "CASH_EXPENSE" ? (
-          <Field label={isDeposit ? t("Deposited by") : t("Paid by")}>
-            <select className={inputCls} value={paidBy} onChange={(e) => setPaidBy(e.target.value)}>
+        ) : isRefund ? (
+          <Field label={t("Refunded to")}>
+            <select className={inputCls} value={refundTo} onChange={(e) => setRefundTo(e.target.value)}>
+              <option value="">{t("Kitty (cash back)")}</option>
               {people.map((p) => (
                 <option key={p.id} value={p.id}>
-                  {p.name}
+                  {t("{name}'s card", { name: p.name })}
                 </option>
               ))}
             </select>
           </Field>
+        ) : isSpend && splitPay ? (
+          <SplitPaymentFields
+            people={people}
+            currency={currency}
+            totalLocal={amountLocal}
+            cardPart={cardPart}
+            setCardPart={setCardPart}
+            cardPayer={cardPayer}
+            setCardPayer={setCardPayer}
+          />
+        ) : type !== "CASH_EXPENSE" ? (
+          <div className={cx(isSettle && "grid grid-cols-2 gap-2")}>
+            <Field label={isDeposit ? t("Deposited by") : isPayout ? t("Paid to") : isSettle ? t("From") : t("Paid by")}>
+              <select className={inputCls} value={paidBy} onChange={(e) => setPaidBy(e.target.value)}>
+                {people.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            {isSettle && (
+              <Field label={t("To")}>
+                <select className={inputCls} value={receiver} onChange={(e) => setReceiver(e.target.value)}>
+                  {people.map((p) => (
+                    <option key={p.id} value={p.id} disabled={p.id === paidBy}>
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            )}
+          </div>
         ) : (
           <p className="rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-900">
             {t("Paid from the cash kitty — reduces the Treasurer's expected cash by {amount}.", { amount: formatMoney(amountBase, base) })}
           </p>
         )}
 
+        {isPayout && paidBy && (
+          <PayoutHelp
+            name={people.find((p) => p.id === paidBy)?.name ?? ""}
+            net={ledger.balances[paidBy]?.net ?? 0}
+            kitty={ledger.pool.balance}
+            base={base}
+            payoutBase={amountBase}
+            editing={state.mode === "edit"}
+            onUse={(n) => {
+              setCurrency(base);
+              setRate("1");
+              setAmount(String(n));
+            }}
+          />
+        )}
+
         {/* Splits */}
-        {!isDeposit && (
+        {!isTransfer && (
           <div>
             <div className="mb-2 flex items-center justify-between">
               <span className="text-xs font-medium text-ink-2">{t("Split between")}</span>
@@ -573,6 +714,110 @@ export default function TransactionModal({
         )}
       </div>
     </Modal>
+  );
+}
+
+/** Card part + card payer for a bill paid partly from the kitty and partly by card. */
+function SplitPaymentFields({
+  people,
+  currency,
+  totalLocal,
+  cardPart,
+  setCardPart,
+  cardPayer,
+  setCardPayer,
+}: {
+  people: TripBundle["participants"];
+  currency: string;
+  totalLocal: number;
+  cardPart: string;
+  setCardPart: (v: string) => void;
+  cardPayer: string;
+  setCardPayer: (v: string) => void;
+}) {
+  const { t } = useT();
+  const card = Number(cardPart) || 0;
+  const kitty = round2(totalLocal - card);
+  return (
+    <div className="space-y-2 rounded-xl bg-sky-50 p-3 ring-1 ring-sky-200">
+      <div className="grid grid-cols-2 gap-2">
+        <Field label={t("Card part ({currency})", { currency })}>
+          <input
+            type="number"
+            inputMode="decimal"
+            min="0"
+            step="0.01"
+            className={inputCls}
+            value={cardPart}
+            onChange={(e) => setCardPart(e.target.value)}
+            placeholder={currencyDecimals(currency) ? "0.00" : "0"}
+          />
+        </Field>
+        <Field label={t("Card paid by")}>
+          <select className={inputCls} value={cardPayer} onChange={(e) => setCardPayer(e.target.value)}>
+            {people.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+        </Field>
+      </div>
+      {totalLocal > 0 && card > 0 && card < totalLocal && (
+        <p className="text-xs text-sky-950">
+          {t("Kitty cash pays {kitty}, card pays {card}. Everyone's share is split across both.", {
+            kitty: formatMoney(kitty, currency),
+            card: formatMoney(card, currency),
+          })}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** Shows how much the payout recipient is owed and how much cash the kitty holds. */
+function PayoutHelp({
+  name,
+  net,
+  kitty,
+  base,
+  payoutBase,
+  editing,
+  onUse,
+}: {
+  name: string;
+  net: number;
+  kitty: number;
+  base: string;
+  payoutBase: number;
+  editing: boolean;
+  onUse: (amount: number) => void;
+}) {
+  const { t } = useT();
+  const owed = round2(net);
+  return (
+    <div className="space-y-1.5 rounded-xl bg-violet-50 px-3 py-2.5 text-xs text-violet-950 ring-1 ring-violet-200">
+      <p>{t("Kitty cash handed to {name} — lowers the kitty and what they're owed by the same amount.", { name })}</p>
+      {!editing && (
+        <p className="flex flex-wrap items-center justify-between gap-2">
+          <span>
+            {owed > 0.004
+              ? t("{name} is currently owed {amount}.", { name, amount: formatMoney(owed, base) })
+              : owed < -0.004
+                ? t("{name} currently owes {amount} — a payout would increase that.", { name, amount: formatMoney(-owed, base) })
+                : t("{name} is currently settled.", { name })}
+          </span>
+          {owed > 0.004 && (
+            <button className="rounded-full bg-white px-2.5 py-1 font-semibold text-violet-800 ring-1 ring-violet-300" onClick={() => onUse(owed)}>
+              {t("Use {amount}", { amount: formatMoney(owed, base) })}
+            </button>
+          )}
+        </p>
+      )}
+      {!editing && payoutBase > kitty + 0.004 && (
+        <p className="font-semibold text-warn">{t("The kitty only holds {amount}.", { amount: formatMoney(kitty, base) })}</p>
+      )}
+    </div>
   );
 }
 

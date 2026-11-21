@@ -5,6 +5,9 @@ import {
   Camera,
   CloudOff,
   Coins,
+  HandCoins,
+  ArrowRightLeft,
+  Undo2,
   Database,
   Images,
   ListOrdered,
@@ -30,7 +33,7 @@ import FeedTab from "./FeedTab";
 import PeopleModal from "./PeopleModal";
 import PhotosTab from "./PhotosTab";
 import PlannerTab from "./PlannerTab";
-import TransactionModal, { type TxModalState } from "./TransactionModal";
+import TransactionModal, { type TxModalState, type TxPrefill } from "./TransactionModal";
 import TripMenu from "./TripMenu";
 import { cx, Toast } from "./ui";
 import UnlockModal from "./UnlockModal";
@@ -128,9 +131,9 @@ export default function TripApp({ tripId }: { tripId: string }) {
   const ledger = useMemo(() => (bundle ? computeLedger(bundle) : null), [bundle]);
   const canEdit = tr.unlocked && !offline;
 
-  const openNew = (type: TxType, scanFile?: File) => {
+  const openNew = (type: TxType, scanFile?: File, prefill?: TxPrefill) => {
     setFabOpen(false);
-    setTxModal({ mode: "new", type, scanFile });
+    setTxModal({ mode: "new", type, scanFile, prefill });
   };
   const openEdit = (tx: Transaction) => canEdit && setTxModal({ mode: "edit", tx });
 
@@ -203,8 +206,28 @@ export default function TripApp({ tripId }: { tripId: string }) {
         <ConversionNote />
 
         <main className="px-3 pt-4">
-          {tab === "feed" && <FeedTab bundle={bundle} ledger={ledger} unlocked={canEdit} onEdit={openEdit} onAddFirst={() => setShowPeople(true)} />}
-          {tab === "balances" && <BalancesTab bundle={bundle} ledger={ledger} onCopied={() => setToast(t("Copied — paste into WhatsApp"))} />}
+          {tab === "feed" && (
+            <FeedTab
+              bundle={bundle}
+              ledger={ledger}
+              unlocked={canEdit}
+              onEdit={openEdit}
+              onDelete={(tx) => {
+                if (confirm(t('Delete "{name}"? This cannot be undone.', { name: tx.title })))
+                  run(() => api(`/api/transactions/${tx.id}`, "DELETE"), "Deleted");
+              }}
+              onAddFirst={() => setShowPeople(true)}
+            />
+          )}
+          {tab === "balances" && (
+            <BalancesTab
+              bundle={bundle}
+              ledger={ledger}
+              unlocked={canEdit}
+              onRecord={(type, prefill) => openNew(type, undefined, prefill)}
+              onCopied={() => setToast(t("Copied — paste into WhatsApp"))}
+            />
+          )}
           {tab === "photos" && <PhotosTab bundle={bundle} unlocked={canEdit} offline={!!offline} run={run} />}
           {tab === "analytics" && <AnalyticsTab bundle={bundle} />}
           {tab === "planner" && <PlannerTab bundle={bundle} unlocked={canEdit} run={run} />}
@@ -231,6 +254,9 @@ export default function TripApp({ tripId }: { tripId: string }) {
                   />
                 </label>
                 <FabItem icon={Coins} label={t("Log Cash Deposit")} onClick={() => openNew("CASH_DEPOSIT")} />
+                <FabItem icon={HandCoins} label={t("Pay out from kitty")} onClick={() => openNew("CASH_PAYOUT")} />
+                <FabItem icon={ArrowRightLeft} label={t("Record settle-up payment")} onClick={() => openNew("TRANSFER")} />
+                <FabItem icon={Undo2} label={t("Log refund")} onClick={() => openNew("REFUND")} />
               </div>
             )}
             <button

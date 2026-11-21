@@ -5,15 +5,51 @@ import { formatWhatsAppSummary, KITTY_ID, type Ledger, type SettlementEntity } f
 import type { TripBundle } from "@/lib/types";
 import { useT } from "@/lib/i18n";
 import { useDisplay } from "./DisplayCurrency";
+import type { TxPrefill } from "./TransactionModal";
 import { Avatar, Button, Card, cx, Money, SectionTitle } from "./ui";
 
-export default function BalancesTab({ bundle, ledger, onCopied }: { bundle: TripBundle; ledger: Ledger; onCopied: () => void }) {
+/** Opens the transaction form pre-filled to record one line of the settlement plan. */
+export type RecordSettlement = (type: "CASH_PAYOUT" | "CASH_DEPOSIT" | "TRANSFER", prefill: TxPrefill) => void;
+
+export default function BalancesTab({
+  bundle,
+  ledger,
+  onCopied,
+  unlocked,
+  onRecord,
+}: {
+  bundle: TripBundle;
+  ledger: Ledger;
+  onCopied: () => void;
+  unlocked: boolean;
+  onRecord: RecordSettlement;
+}) {
   const cur = bundle.trip.base_currency;
   const [copied, setCopied] = useState(false);
   const d = useDisplay();
   const { t } = useT();
   const kittyName = ledger.treasurerName ? t("Cash Kitty ({name})", { name: ledger.treasurerName }) : t("Cash Kitty");
   const partyName = (id: string, name: string) => (id === KITTY_ID ? kittyName : name);
+
+  /** Cash moves to/from one person: for a family, use the member most owed (paid) or who owes most (deposit). */
+  const memberFor = (entityId: string, wantsOwed: boolean) => {
+    const ent = ledger.entities.find((e) => e.id === entityId);
+    const ids = ent?.member_ids ?? [entityId];
+    return [...ids].sort((a, b) => (ledger.balances[b]?.net ?? 0) - (ledger.balances[a]?.net ?? 0))[wantsOwed ? 0 : ids.length - 1];
+  };
+  const record = (x: (typeof ledger.transfers)[number]) => {
+    if (x.from_id === KITTY_ID)
+      onRecord("CASH_PAYOUT", { amount: x.amount, personId: memberFor(x.to_id, true), title: t("Settle-up from kitty") });
+    else if (x.to_id === KITTY_ID)
+      onRecord("CASH_DEPOSIT", { amount: x.amount, personId: memberFor(x.from_id, false), title: t("Settle-up into kitty"), singleDeposit: true });
+    else
+      onRecord("TRANSFER", {
+        amount: x.amount,
+        personId: memberFor(x.from_id, false),
+        receiverId: memberFor(x.to_id, true),
+        title: t("Settle-up payment"),
+      });
+  };
   const summary = formatWhatsAppSummary(bundle.trip.name, cur, ledger, {
     fmt: d.fmt,
     t,
@@ -83,6 +119,15 @@ export default function BalancesTab({ bundle, ledger, onCopied }: { bundle: Trip
                   <span className="font-semibold">{partyName(x.to_id, x.to_name)}</span>
                 </span>
                 <Money amount={x.amount} className="font-bold" />
+                {unlocked && (
+                  <button
+                    onClick={() => record(x)}
+                    className="shrink-0 rounded-full bg-violet-50 px-2.5 py-1 text-xs font-semibold text-violet-800 ring-1 ring-violet-200"
+                    aria-label={t("Record payment {from} → {to}", { from: partyName(x.from_id, x.from_name), to: partyName(x.to_id, x.to_name) })}
+                  >
+                    {t("Record")}
+                  </button>
+                )}
               </li>
             ))}
           </ol>
@@ -123,6 +168,9 @@ function EntityCard({
   const { t } = useT();
   const square = Math.abs(e.net) < 0.01;
   const members = e.member_ids.map((id) => ({ p: bundle.participants.find((x) => x.id === id)!, b: ledger.balances[id] }));
+  // Only show the "From kitty" column when someone in this group has actually received kitty cash.
+  const showReceived = members.some((m) => m.b.received > 0);
+  const showSettled = members.some((m) => Math.abs(m.b.settled) > 0.004);
 
   return (
     <Card className="overflow-hidden">
@@ -151,6 +199,8 @@ function EntityCard({
                 <th className="py-1 text-right font-medium">{t("Cash in")}</th>
                 <th className="py-1 text-right font-medium">{t("Card paid")}</th>
                 <th className="py-1 text-right font-medium">{t("Share")}</th>
+                {showReceived && <th className="py-1 text-right font-medium">{t("From kitty")}</th>}
+                {showSettled && <th className="py-1 text-right font-medium">{t("Settled")}</th>}
                 <th className="py-1 text-right font-medium">{t("Net")}</th>
               </tr>
             </thead>
@@ -170,6 +220,16 @@ function EntityCard({
                   <td className="text-right">
                     <Money amount={-b.shares} />
                   </td>
+                  {showReceived && (
+                    <td className="text-right">
+                      <Money amount={-b.received} />
+                    </td>
+                  )}
+                  {showSettled && (
+                    <td className="text-right">
+                      <Money amount={b.settled} signed />
+                    </td>
+                  )}
                   <td className={cx("text-right font-semibold", b.net > 0.004 ? "text-pos" : b.net < -0.004 ? "text-neg" : "")}>
                     <Money amount={b.net} signed />
                   </td>

@@ -54,7 +54,7 @@ export function currency(v: unknown, field = "currency"): string {
 }
 
 export function txType(v: unknown): TxType {
-  if (!TX_TYPES.includes(v as TxType)) fail("type must be CASH_DEPOSIT, CASH_EXPENSE or CARD_EXPENSE");
+  if (!TX_TYPES.includes(v as TxType)) fail(`type must be one of ${TX_TYPES.join(", ")}`);
   return v as TxType;
 }
 

@@ -1,22 +1,30 @@
 import { fromCents, toCents } from "./settlement";
-import type { BudgetItem, Transaction } from "./types";
+import { EXPENSE_TYPES, type BudgetItem, type Transaction } from "./types";
 
-export const isExpense = (t: Transaction) => t.type !== "CASH_DEPOSIT";
+/** Real spending only — deposits, payouts and settle-ups just move cash around. */
+export const isExpense = (t: Transaction) => EXPENSE_TYPES.includes(t.type);
+/** Spending and refunds (refunds count as negative spending). */
+const affectsSpend = (t: Transaction) => isExpense(t) || t.type === "REFUND";
+/** Signed spend in cents: expenses positive, refunds negative. */
+const spendCents = (t: Transaction) => (t.type === "REFUND" ? -1 : 1) * toCents(t.amount_base);
 
 export function categoryTotals(transactions: Transaction[]) {
   const m = new Map<string, number>();
-  for (const t of transactions.filter(isExpense)) m.set(t.category, (m.get(t.category) ?? 0) + toCents(t.amount_base));
-  return [...m.entries()].map(([category, c]) => ({ category, amount: fromCents(c) })).sort((a, b) => b.amount - a.amount);
+  for (const t of transactions.filter(affectsSpend)) m.set(t.category, (m.get(t.category) ?? 0) + spendCents(t));
+  return [...m.entries()]
+    .filter(([, c]) => c !== 0)
+    .map(([category, c]) => ({ category, amount: fromCents(c) }))
+    .sort((a, b) => b.amount - a.amount);
 }
 
 /** Daily spend and running total for every calendar day from first to last expense. */
 export function dailySeries(transactions: Transaction[]) {
-  const exp = transactions.filter(isExpense);
+  const exp = transactions.filter(affectsSpend);
   if (exp.length === 0) return [];
   const m = new Map<string, number>();
   for (const t of exp) {
     const d = t.occurred_at.slice(0, 10);
-    m.set(d, (m.get(d) ?? 0) + toCents(t.amount_base));
+    m.set(d, (m.get(d) ?? 0) + spendCents(t));
   }
   const days = [...m.keys()].sort();
   const start = new Date(`${days[0]}T00:00:00Z`);
@@ -33,9 +41,11 @@ export function dailySeries(transactions: Transaction[]) {
 }
 
 export function keyMetrics(transactions: Transaction[], participantCount: number) {
-  const exp = transactions.filter(isExpense);
-  const total = exp.reduce((a, t) => a + toCents(t.amount_base), 0);
-  const cash = exp.filter((t) => t.type === "CASH_EXPENSE").reduce((a, t) => a + toCents(t.amount_base), 0);
+  const exp = transactions.filter(affectsSpend);
+  const total = exp.reduce((a, t) => a + spendCents(t), 0);
+  // Cash = kitty spending, less cash refunds paid back into the kitty.
+  const isCash = (t: Transaction) => t.type === "CASH_EXPENSE" || (t.type === "REFUND" && !t.paid_by_participant_id);
+  const cash = exp.filter(isCash).reduce((a, t) => a + spendCents(t), 0);
   const days = dailySeries(transactions).length;
   return {
     total: fromCents(total),

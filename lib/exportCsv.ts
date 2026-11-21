@@ -29,7 +29,7 @@ export function buildTransactionsCsv(b: TripBundle, t: (k: string) => string = (
         tx.occurred_at.slice(0, 10),
         tx.type,
         tx.title,
-        tx.type === "CASH_DEPOSIT" ? "" : t(tx.category),
+        tx.type === "CASH_DEPOSIT" || tx.type === "CASH_PAYOUT" || tx.type === "TRANSFER" ? "" : t(tx.category),
         tx.amount_local,
         tx.currency,
         tx.exchange_rate_to_base,

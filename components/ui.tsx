@@ -3,6 +3,9 @@ import {
   BedDouble,
   Bus,
   Coins,
+  HandCoins,
+  ArrowRightLeft,
+  Undo2,
   Plane,
   ShoppingBag,
   Ticket,
@@ -31,7 +34,16 @@ export const CATEGORY_ICONS: Record<string, LucideIcon> = {
 };
 
 export function CategoryIcon({ category, type, className }: { category: string; type?: TxType; className?: string }) {
-  const Icon = type === "CASH_DEPOSIT" ? Coins : CATEGORY_ICONS[category] ?? Package;
+  const Icon =
+    type === "CASH_DEPOSIT"
+      ? Coins
+      : type === "CASH_PAYOUT"
+        ? HandCoins
+        : type === "TRANSFER"
+          ? ArrowRightLeft
+          : type === "REFUND"
+            ? Undo2
+            : CATEGORY_ICONS[category] ?? Package;
   return <Icon className={className ?? "h-5 w-5"} aria-hidden />;
 }
 
@@ -39,6 +51,9 @@ const PILL: Record<TxType, { label: string; cls: string }> = {
   CASH_DEPOSIT: { label: "CASH DEPOSIT", cls: "bg-emerald-50 text-emerald-800 ring-emerald-200" },
   CASH_EXPENSE: { label: "CASH", cls: "bg-amber-50 text-amber-800 ring-amber-200" },
   CARD_EXPENSE: { label: "CARD", cls: "bg-sky-50 text-sky-800 ring-sky-200" },
+  CASH_PAYOUT: { label: "KITTY PAYOUT", cls: "bg-violet-50 text-violet-800 ring-violet-200" },
+  TRANSFER: { label: "SETTLE-UP", cls: "bg-stone-100 text-stone-700 ring-stone-300" },
+  REFUND: { label: "REFUND", cls: "bg-rose-50 text-rose-800 ring-rose-200" },
 };
 
 export function TypePill({ type }: { type: TxType }) {

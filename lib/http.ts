@@ -13,6 +13,9 @@ function toResponse(e: unknown) {
   const status = (e as { status?: number })?.status;
   if (status && status >= 400 && status < 500) return errorJson((e as Error).message, status);
   const msg = (e as Error)?.message ?? "";
+  if (/transactions_type_check|column .* does not exist/i.test(msg)) {
+    return errorJson("Database needs an update — run supabase/schema.sql again in the Supabase SQL Editor", 503);
+  }
   if (/schema cache|PGRST205|relation .* does not exist/i.test(msg)) {
     return errorJson("Database tables not found — run supabase/schema.sql in the Supabase SQL Editor", 503);
   }

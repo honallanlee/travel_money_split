@@ -1,6 +1,7 @@
 "use client";
-import { CheckCircle2, ChevronDown, Pencil, Users, Wallet } from "lucide-react";
+import { CheckCircle2, ChevronDown, Pencil, Trash2, Users, Wallet } from "lucide-react";
 import { useMemo, useState } from "react";
+import { isExpense } from "@/lib/analytics";
 import { formatMoney, round2, type Ledger } from "@/lib/settlement";
 import type { Participant, Transaction, TripBundle } from "@/lib/types";
 import { useT } from "@/lib/i18n";
@@ -12,12 +13,14 @@ export default function FeedTab({
   ledger,
   unlocked,
   onEdit,
+  onDelete,
   onAddFirst,
 }: {
   bundle: TripBundle;
   ledger: Ledger;
   unlocked: boolean;
   onEdit: (tx: Transaction) => void;
+  onDelete: (tx: Transaction) => void;
   onAddFirst: () => void;
 }) {
   const { t, locale } = useT();
@@ -55,15 +58,24 @@ export default function FeedTab({
       )}
 
       {byDay.map(([day, txs]) => {
-        const daySpend = txs.filter((t) => t.type !== "CASH_DEPOSIT").reduce((a, t) => a + t.amount_base, 0);
+        const daySpend = txs.reduce((a, t) => a + (isExpense(t) ? t.amount_base : t.type === "REFUND" ? -t.amount_base : 0), 0);
         return (
           <section key={day}>
-            <SectionTitle action={daySpend > 0 && <Money amount={round2(daySpend)} className="text-xs text-ink-3" />}>
+            <SectionTitle action={Math.abs(daySpend) > 0.004 && <Money amount={round2(daySpend)} className="text-xs text-ink-3" />}>
               {formatDay(day, locale)}
             </SectionTitle>
             <Card className="divide-y divide-line overflow-hidden">
               {txs.map((tx) => (
-                <TxRow key={tx.id} tx={tx} currency={cur} names={names} people={people} unlocked={unlocked} onEdit={() => onEdit(tx)} />
+                <TxRow
+                  key={tx.id}
+                  tx={tx}
+                  currency={cur}
+                  names={names}
+                  people={people}
+                  unlocked={unlocked}
+                  onEdit={() => onEdit(tx)}
+                  onDelete={() => onDelete(tx)}
+                />
               ))}
             </Card>
           </section>
@@ -89,7 +101,7 @@ function CashWalletCard({ ledger, currency, treasurer }: { ledger: Ledger; curre
         </div>
         <p className="tabular mt-1 text-4xl font-bold">{formatMoney(pool.balance, currency)}</p>
         {d.converted && <p className="tabular text-sm text-teal-100">≈ {d.fmt(pool.balance)}</p>}
-        <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
+        <div className={cx("mt-3 grid gap-2 text-sm", pool.payouts > 0 ? "grid-cols-3" : "grid-cols-2")}>
           <div className="rounded-xl bg-white/10 px-3 py-2">
             <p className="text-xs text-teal-100">{t("Deposited")}</p>
             <p className="tabular font-semibold">{formatMoney(pool.deposits, currency)}</p>
@@ -100,7 +112,17 @@ function CashWalletCard({ ledger, currency, treasurer }: { ledger: Ledger; curre
             <p className="tabular font-semibold">{formatMoney(pool.expenses, currency)}</p>
             {d.converted && <p className="tabular text-[11px] text-teal-100">≈ {d.fmt(pool.expenses)}</p>}
           </div>
+          {pool.payouts > 0 && (
+            <div className="rounded-xl bg-white/10 px-3 py-2">
+              <p className="text-xs text-teal-100">{t("Paid out")}</p>
+              <p className="tabular font-semibold">{formatMoney(pool.payouts, currency)}</p>
+              {d.converted && <p className="tabular text-[11px] text-teal-100">≈ {d.fmt(pool.payouts)}</p>}
+            </div>
+          )}
         </div>
+        {pool.refunds > 0 && (
+          <p className="mt-2 text-xs text-teal-100">{t("Includes {amount} of cash refunds back into the kitty.", { amount: formatMoney(pool.refunds, currency) })}</p>
+        )}
       </div>
       <button onClick={() => setOpen((o) => !o)} className="flex w-full items-center justify-between px-4 py-3 text-sm font-semibold text-brand" aria-expanded={open}>
         <span className="flex items-center gap-2">
@@ -148,6 +170,7 @@ function TxRow({
   people,
   unlocked,
   onEdit,
+  onDelete,
 }: {
   tx: Transaction;
   currency: string;
@@ -155,12 +178,18 @@ function TxRow({
   people: Record<string, Participant>;
   unlocked: boolean;
   onEdit: () => void;
+  onDelete: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const d = useDisplay();
   const { t } = useT();
   const isDeposit = tx.type === "CASH_DEPOSIT";
+  const isPayout = tx.type === "CASH_PAYOUT";
+  const isSettle = tx.type === "TRANSFER";
+  const isRefund = tx.type === "REFUND";
+  const isTransfer = isDeposit || isPayout || isSettle;
   const payer = tx.paid_by_participant_id ? names[tx.paid_by_participant_id] : null;
+  const receiverId = isSettle ? tx.splits[0]?.participant_id : undefined;
   const foreign = tx.currency !== currency;
   const showOriginal = tx.currency !== d.code;
 
@@ -170,7 +199,17 @@ function TxRow({
         <div
           className={cx(
             "grid h-10 w-10 shrink-0 place-items-center rounded-xl",
-            isDeposit ? "bg-emerald-50 text-emerald-700" : tx.type === "CASH_EXPENSE" ? "bg-amber-50 text-amber-700" : "bg-sky-50 text-sky-700",
+            isDeposit
+              ? "bg-emerald-50 text-emerald-700"
+              : isPayout
+                ? "bg-violet-50 text-violet-700"
+                : isSettle
+                  ? "bg-stone-100 text-stone-700"
+                  : isRefund
+                    ? "bg-rose-50 text-rose-700"
+                    : tx.type === "CASH_EXPENSE"
+                  ? "bg-amber-50 text-amber-700"
+                  : "bg-sky-50 text-sky-700",
           )}
         >
           <CategoryIcon category={tx.category} type={tx.type} />
@@ -179,27 +218,50 @@ function TxRow({
           <p className="truncate text-sm font-semibold">{tx.title}</p>
           <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-ink-3">
             <TypePill type={tx.type} />
-            {payer && (
+            {isSettle && payer && (
               <span className="inline-flex items-center gap-1 rounded-full bg-stone-100 py-0.5 pl-0.5 pr-1.5 text-[11px] font-medium text-ink-2">
                 <Avatar person={people[tx.paid_by_participant_id!]} size={16} className="ring-0" />
-                {t(isDeposit ? "from {name}" : tx.type === "CASH_EXPENSE" ? "via {name}" : "paid by {name}", { name: payer })}
+                {payer} → {receiverId ? names[receiverId] ?? t("Removed") : "?"}
               </span>
             )}
-            {!isDeposit && <span>÷ {tx.splits.length}</span>}
+            {isRefund && !payer && (
+              <span className="rounded-full bg-stone-100 px-1.5 py-0.5 text-[11px] font-medium text-ink-2">{t("into kitty")}</span>
+            )}
+            {payer && !isSettle && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-stone-100 py-0.5 pl-0.5 pr-1.5 text-[11px] font-medium text-ink-2">
+                <Avatar person={people[tx.paid_by_participant_id!]} size={16} className="ring-0" />
+                {t(
+                  isDeposit
+                    ? "from {name}"
+                    : isPayout || isRefund
+                      ? "to {name}"
+                      : tx.type === "CASH_EXPENSE"
+                        ? "via {name}"
+                        : "paid by {name}",
+                  { name: payer },
+                )}
+              </span>
+            )}
+            {!isTransfer && <span>÷ {tx.splits.length}</span>}
           </div>
         </div>
         <div className="text-right">
-          <Money amount={tx.amount_base} className={cx("text-sm font-semibold", isDeposit && "text-pos")} signed={isDeposit} />
+          <Money
+            amount={isRefund ? -tx.amount_base : tx.amount_base}
+            className={cx("text-sm font-semibold", isDeposit && "text-pos", isRefund && "text-rose-700")}
+            signed={isDeposit}
+          />
           {showOriginal && <p className="tabular text-[11px] text-ink-3">{formatMoney(tx.amount_local, tx.currency)}</p>}
         </div>
       </button>
       {open && (
         <div className="space-y-2 bg-stone-50 px-4 pb-3 pt-1 text-sm">
           <p className="text-xs text-ink-3">
-            {isDeposit ? t("Cash deposit") : t(tx.category)}
+            {isDeposit ? t("Cash deposit") : isPayout ? t("Paid from kitty") : isSettle ? t("Settle-up payment") : t(tx.category)}
+            {isRefund && ` · ${t("shares given back")}`}
             {foreign && ` · ${t("rate")} 1 ${tx.currency} = ${tx.exchange_rate_to_base} ${currency}`}
           </p>
-          {!isDeposit && (
+          {!isTransfer && (
             <ul className="space-y-1">
               {tx.splits.map((s) => (
                 <li key={s.participant_id} className="flex justify-between">
@@ -229,9 +291,14 @@ function TxRow({
             </details>
           )}
           {unlocked && (
-            <Button variant="secondary" className="w-full" onClick={onEdit}>
-              <Pencil className="h-4 w-4" /> {t("Edit")}
-            </Button>
+            <div className="flex gap-2">
+              <Button variant="secondary" className="flex-1" onClick={onEdit}>
+                <Pencil className="h-4 w-4" /> {t("Edit")}
+              </Button>
+              <Button variant="danger" onClick={onDelete} aria-label={t("Delete transaction")}>
+                <Trash2 className="h-4 w-4" /> {t("Delete")}
+              </Button>
+            </div>
           )}
         </div>
       )}

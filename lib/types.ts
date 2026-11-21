@@ -1,6 +1,20 @@
-export type TxType = "CASH_DEPOSIT" | "CASH_EXPENSE" | "CARD_EXPENSE";
+/**
+ * CASH_DEPOSIT  — someone hands cash to the Treasurer (into the kitty)
+ * CASH_EXPENSE  — the Treasurer pays a shared cost from the kitty
+ * CARD_EXPENSE  — someone pays a shared cost with their own card/cash
+ * CASH_PAYOUT   — the kitty hands cash to someone (reimbursement or settling up);
+ *                 `paid_by_participant_id` is the person who RECEIVED the cash
+ * TRANSFER      — one person pays another directly (settling up outside the kitty);
+ *                 `paid_by_participant_id` = payer, the single split = receiver (full amount)
+ * REFUND        — money back from a shop; splits are the shares credited back.
+ *                 `paid_by_participant_id` = who got the money (card refund), or null = cash into the kitty
+ */
+export type TxType = "CASH_DEPOSIT" | "CASH_EXPENSE" | "CARD_EXPENSE" | "CASH_PAYOUT" | "TRANSFER" | "REFUND";
 
-export const TX_TYPES: TxType[] = ["CASH_DEPOSIT", "CASH_EXPENSE", "CARD_EXPENSE"];
+export const TX_TYPES: TxType[] = ["CASH_DEPOSIT", "CASH_EXPENSE", "CARD_EXPENSE", "CASH_PAYOUT", "TRANSFER", "REFUND"];
+
+/** Types that are real spending (counted in analytics, budgets and split between people). */
+export const EXPENSE_TYPES: TxType[] = ["CASH_EXPENSE", "CARD_EXPENSE"];
 
 export const CATEGORIES = [
   "Food & Drink",

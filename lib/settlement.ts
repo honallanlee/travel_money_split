@@ -99,6 +99,25 @@ export function splitByLineItems(
   return { splits: splitByWeights(total, weights, decimals), unassignedAmount: round2(unassigned) };
 }
 
+/**
+ * Split payment (part kitty cash, part card): divide each person's share of the whole bill
+ * between the two parts in proportion, so both parts' shares add up exactly.
+ */
+export function splitSharesBetweenParts(
+  splits: Split[],
+  partBase: number,
+  decimals = 2,
+): { part: Split[]; rest: Split[] } {
+  const step = 10 ** (2 - Math.min(2, Math.max(0, decimals)));
+  const partCents = allocateCents(toCents(partBase), splits.map((s) => toCents(s.share_amount_base)), step);
+  const part = splits.map((s, i) => ({ participant_id: s.participant_id, share_amount_base: fromCents(partCents[i]) }));
+  const rest = splits.map((s, i) => ({
+    participant_id: s.participant_id,
+    share_amount_base: fromCents(toCents(s.share_amount_base) - partCents[i]),
+  }));
+  return { part: part.filter((s) => s.share_amount_base > 0), rest: rest.filter((s) => s.share_amount_base > 0) };
+}
+
 // ---------------------------------------------------------------------------
 // Ledger
 // ---------------------------------------------------------------------------
@@ -106,18 +125,32 @@ export function splitByLineItems(
 export interface CashPool {
   deposits: number;
   expenses: number;
+  /** cash handed out of the kitty to people (reimbursements / settling up) */
+  payouts: number;
+  /** cash refunds from shops paid back into the kitty */
+  refunds: number;
   balance: number;
 }
 
-/** Expected Cash in Treasurer's Wallet = SUM(CASH_DEPOSIT) - SUM(CASH_EXPENSE) */
+/** Expected Cash in Treasurer's Wallet = Σ deposits − Σ cash expenses − Σ payouts + Σ cash refunds */
 export function computeCashPool(transactions: Transaction[]): CashPool {
   let dep = 0;
   let exp = 0;
+  let out = 0;
+  let ref = 0;
   for (const t of transactions) {
     if (t.type === "CASH_DEPOSIT") dep += toCents(t.amount_base);
     else if (t.type === "CASH_EXPENSE") exp += toCents(t.amount_base);
+    else if (t.type === "CASH_PAYOUT") out += toCents(t.amount_base);
+    else if (t.type === "REFUND" && !t.paid_by_participant_id) ref += toCents(t.amount_base);
   }
-  return { deposits: fromCents(dep), expenses: fromCents(exp), balance: fromCents(dep - exp) };
+  return {
+    deposits: fromCents(dep),
+    expenses: fromCents(exp),
+    payouts: fromCents(out),
+    refunds: fromCents(ref),
+    balance: fromCents(dep - exp - out + ref),
+  };
 }
 
 export interface ParticipantBalance {
@@ -125,21 +158,49 @@ export interface ParticipantBalance {
   deposits: number;
   card_paid: number;
   shares: number;
+  /** cash received from the kitty */
+  received: number;
+  /** direct settle-up payments: paid to others minus received from others */
+  settled: number;
   net: number;
 }
 
-/** net = cash deposits + card outlays - expense shares. Positive = owed money. */
+/**
+ * net = cash deposits + card outlays − expense shares − cash received from the kitty + direct payments made.
+ * Refunds reduce shares (and, for a card refund, the recipient's card outlay). Positive = owed money.
+ */
 export function computeParticipantBalances(
   participants: Participant[],
   transactions: Transaction[],
 ): Record<string, ParticipantBalance> {
-  const acc: Record<string, { dep: number; card: number; share: number }> = {};
-  for (const p of participants) acc[p.id] = { dep: 0, card: 0, share: 0 };
+  const acc: Record<string, { dep: number; card: number; share: number; recv: number; settled: number }> = {};
+  for (const p of participants) acc[p.id] = { dep: 0, card: 0, share: 0, recv: 0, settled: 0 };
 
   for (const t of transactions) {
     const payer = t.paid_by_participant_id ? acc[t.paid_by_participant_id] : undefined;
     if (t.type === "CASH_DEPOSIT") {
       if (payer) payer.dep += toCents(t.amount_base);
+      continue;
+    }
+    if (t.type === "CASH_PAYOUT") {
+      if (payer) payer.recv += toCents(t.amount_base);
+      continue;
+    }
+    if (t.type === "TRANSFER") {
+      if (payer) payer.settled += toCents(t.amount_base);
+      for (const s of t.splits ?? []) {
+        const who = acc[s.participant_id];
+        if (who) who.settled -= toCents(s.share_amount_base);
+      }
+      continue;
+    }
+    if (t.type === "REFUND") {
+      // A card refund lands with one person: it undoes part of what they paid out.
+      if (payer) payer.card -= toCents(t.amount_base);
+      for (const s of t.splits ?? []) {
+        const who = acc[s.participant_id];
+        if (who) who.share -= toCents(s.share_amount_base);
+      }
       continue;
     }
     if (t.type === "CARD_EXPENSE" && payer) payer.card += toCents(t.amount_base);
@@ -156,7 +217,9 @@ export function computeParticipantBalances(
       deposits: fromCents(a.dep),
       card_paid: fromCents(a.card),
       shares: fromCents(a.share),
-      net: fromCents(a.dep + a.card - a.share),
+      received: fromCents(a.recv),
+      settled: fromCents(a.settled),
+      net: fromCents(a.dep + a.card - a.share - a.recv + a.settled),
     };
   }
   return out;
@@ -172,6 +235,8 @@ export interface SettlementEntity {
   deposits: number;
   card_paid: number;
   shares: number;
+  received: number;
+  settled: number;
   net: number;
 }
 
@@ -187,7 +252,7 @@ export function rollupEntities(
   balances: Record<string, ParticipantBalance>,
 ): SettlementEntity[] {
   const groupById = new Map(groups.map((g) => [g.id, g]));
-  const entities = new Map<string, SettlementEntity & { _c: [number, number, number, number] }>();
+  const entities = new Map<string, SettlementEntity & { _c: [number, number, number, number, number, number] }>();
 
   for (const p of participants) {
     const b = balances[p.id];
@@ -204,8 +269,10 @@ export function rollupEntities(
         deposits: 0,
         card_paid: 0,
         shares: 0,
+        received: 0,
+        settled: 0,
         net: 0,
-        _c: [0, 0, 0, 0],
+        _c: [0, 0, 0, 0, 0, 0],
       };
       entities.set(key, e);
     }
@@ -214,6 +281,8 @@ export function rollupEntities(
     e._c[1] += toCents(b.card_paid);
     e._c[2] += toCents(b.shares);
     e._c[3] += toCents(b.net);
+    e._c[4] += toCents(b.received);
+    e._c[5] += toCents(b.settled);
   }
 
   return [...entities.values()].map(({ _c, ...e }) => ({
@@ -221,6 +290,8 @@ export function rollupEntities(
     deposits: fromCents(_c[0]),
     card_paid: fromCents(_c[1]),
     shares: fromCents(_c[2]),
+    received: fromCents(_c[4]),
+    settled: fromCents(_c[5]),
     net: fromCents(_c[3]),
   }));
 }
@@ -295,6 +366,8 @@ export function computeLedger(bundle: Pick<TripBundle, "participants" | "mini_gr
       deposits: 0,
       card_paid: 0,
       shares: 0,
+      received: 0,
+      settled: 0,
       net: -pool.balance,
     });
   }

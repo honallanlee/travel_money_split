@@ -10,6 +10,7 @@ import {
   simplifyDebts,
   splitByLineItems,
   splitEqually,
+  splitSharesBetweenParts,
   currencyDecimals,
   roundTo,
 } from "@/lib/settlement";
@@ -92,7 +93,7 @@ describe("cash pool", () => {
       tx("CASH_EXPENSE", 30, null, { alice: 15, charlie: 15 }),
       tx("CARD_EXPENSE", 200, "dave", { alice: 100, dave: 100 }),
     ];
-    expect(computeCashPool(txs)).toEqual({ deposits: 150, expenses: 30, balance: 120 });
+    expect(computeCashPool(txs)).toEqual({ deposits: 150, expenses: 30, payouts: 0, refunds: 0, balance: 120 });
   });
 
   it("uses amount_base for foreign-currency cash", () => {
@@ -248,5 +249,119 @@ describe("whole-unit currencies (JPY)", () => {
 
   it("puts a non-whole total's leftover on the largest share", () => {
     expect(allocateCents(100050, [1, 1], 100).reduce((a, b) => a + b)).toBe(100050);
+  });
+});
+
+describe("kitty payouts (CASH_PAYOUT)", () => {
+  it("reimbursing a card payer from the kitty lowers the pool and clears what they're owed", () => {
+    const txs = [
+      tx("CASH_DEPOSIT", 300, "alice"),
+      tx("CARD_EXPENSE", 120, "dave", { alice: 30, bob: 30, charlie: 30, dave: 30 }), // Dave owed 90
+      tx("CASH_PAYOUT", 90, "dave"), // kitty pays Dave back
+    ];
+    const pool = computeCashPool(txs);
+    expect(pool).toEqual({ deposits: 300, expenses: 0, payouts: 90, refunds: 0, balance: 210 });
+    const b = computeParticipantBalances(people, txs);
+    expect(b.dave).toMatchObject({ card_paid: 120, shares: 30, received: 90, net: 0 });
+    expect(sumNet(b)).toBe(pool.balance); // invariant still holds
+  });
+
+  it("settling up from leftover kitty cash zeroes the plan", () => {
+    const base = [
+      tx("CASH_DEPOSIT", 100, "alice"),
+      tx("CASH_DEPOSIT", 100, "charlie"),
+      tx("CASH_EXPENSE", 120, null, { alice: 30, bob: 30, charlie: 30, dave: 30 }),
+    ];
+    const before = computeLedger({ participants: people, mini_groups: groups, transactions: base });
+    // Record exactly what the plan says the kitty should pay out; Dave pays his share into the kitty.
+    const payouts = before.transfers
+      .filter((x) => x.from_id === KITTY_ID)
+      .map((x) => tx("CASH_PAYOUT", x.amount, x.to_id === "smith" ? "alice" : x.to_id));
+    const daveIn = before.transfers.filter((x) => x.from_id === "dave").map((x) => x);
+    expect(daveIn.length).toBeGreaterThan(0);
+    const after = computeLedger({
+      participants: people,
+      mini_groups: groups,
+      transactions: [...base, ...payouts, tx("CASH_DEPOSIT", 30, "dave"),
+        // the kitty then passes Dave's 30 on to whoever it was meant for
+        ...daveIn.map((x) => tx("CASH_PAYOUT", x.amount, x.to_id === "smith" ? "alice" : x.to_id))],
+    });
+    expect(after.transfers).toEqual([]);
+    expect(after.pool.balance).toBe(0);
+  });
+
+  it("payouts are not counted as spending", async () => {
+    const { categoryTotals, keyMetrics } = await import("@/lib/analytics");
+    const txs = [tx("CASH_EXPENSE", 60, null, { alice: 60 }), tx("CASH_PAYOUT", 500, "bob"), tx("CASH_DEPOSIT", 600, "alice")];
+    expect(categoryTotals(txs)).toEqual([{ category: "Other", amount: 60 }]);
+    expect(keyMetrics(txs, 4).total).toBe(60);
+  });
+});
+
+describe("direct settle-up payments (TRANSFER)", () => {
+  it("paying someone directly clears both sides and leaves the kitty alone", () => {
+    const base = [tx("CARD_EXPENSE", 100, "charlie", { charlie: 50, dave: 50 })]; // Dave owes Charlie 50
+    const before = computeLedger({ participants: people, mini_groups: groups, transactions: base });
+    expect(before.transfers).toEqual([{ from_id: "dave", from_name: "Dave", to_id: "charlie", to_name: "Charlie", amount: 50 }]);
+    const after = computeLedger({
+      participants: people,
+      mini_groups: groups,
+      transactions: [...base, tx("TRANSFER", 50, "dave", { charlie: 50 })],
+    });
+    expect(after.balances.dave).toMatchObject({ settled: 50, net: 0 });
+    expect(after.balances.charlie).toMatchObject({ settled: -50, net: 0 });
+    expect(after.pool.balance).toBe(0);
+    expect(after.transfers).toEqual([]);
+  });
+});
+
+describe("refunds (REFUND)", () => {
+  it("cash refund into the kitty raises the pool and gives shares back", () => {
+    const txs = [
+      tx("CASH_DEPOSIT", 100, "alice"),
+      tx("CASH_EXPENSE", 60, null, { alice: 30, bob: 30 }),
+      tx("REFUND", 20, null, { alice: 10, bob: 10 }),
+    ];
+    const pool = computeCashPool(txs);
+    expect(pool).toMatchObject({ refunds: 20, balance: 60 });
+    const b = computeParticipantBalances(people, txs);
+    expect(b.alice).toMatchObject({ shares: 20, net: 80 });
+    expect(b.bob).toMatchObject({ shares: 20, net: -20 });
+    expect(sumNet(b)).toBe(pool.balance);
+  });
+
+  it("card refund reduces the payer's outlay, not the kitty", () => {
+    const txs = [tx("CARD_EXPENSE", 90, "dave", { charlie: 45, dave: 45 }), tx("REFUND", 30, "dave", { charlie: 15, dave: 15 })];
+    const b = computeParticipantBalances(people, txs);
+    expect(b.dave).toMatchObject({ card_paid: 60, shares: 30, net: 30 });
+    expect(b.charlie.net).toBe(-30);
+    expect(computeCashPool(txs).balance).toBe(0);
+  });
+
+  it("refunds count as negative spending in analytics", async () => {
+    const { categoryTotals, keyMetrics } = await import("@/lib/analytics");
+    const t1 = { ...tx("CASH_EXPENSE", 60, null, { alice: 60 }), category: "Shopping" };
+    const t2 = { ...tx("REFUND", 20, null, { alice: 20 }), category: "Shopping" };
+    expect(categoryTotals([t1, t2])).toEqual([{ category: "Shopping", amount: 40 }]);
+    expect(keyMetrics([t1, t2], 1)).toMatchObject({ total: 40, cash: 40 });
+  });
+});
+
+describe("split payment (part kitty, part card)", () => {
+  it("divides each share between the parts and both add up exactly", () => {
+    const shares = [
+      { participant_id: "a", share_amount_base: 4000 },
+      { participant_id: "b", share_amount_base: 3000 },
+      { participant_id: "c", share_amount_base: 3000 },
+    ];
+    const { part, rest } = splitSharesBetweenParts(shares, 3333, 0); // ¥3,333 on card, ¥6,667 from kitty
+    expect(part.reduce((x, s) => x + s.share_amount_base, 0)).toBe(3333);
+    expect(rest.reduce((x, s) => x + s.share_amount_base, 0)).toBe(6667);
+    expect([...part, ...rest].every((s) => Number.isInteger(s.share_amount_base))).toBe(true);
+    // each person still pays their full share across both parts
+    for (const s of shares) {
+      const total = [...part, ...rest].filter((x) => x.participant_id === s.participant_id).reduce((x, y) => x + y.share_amount_base, 0);
+      expect(total).toBe(s.share_amount_base);
+    }
   });
 });

@@ -77,6 +77,19 @@ GEMINI_API_KEY=AIza...
 
 ---
 
+## 2b. Leaving the app idle (e.g. weeks before the trip)
+
+- **Supabase Free pauses a project after about a week with no activity.** A paused project
+  makes the app show errors until you press **Restore** in the Supabase dashboard (data is
+  kept; restoring takes a few minutes).
+- **Prevention (built in):** `vercel.json` schedules a Vercel Cron job that calls
+  `/api/keepalive` once a day; it runs one tiny database read so Supabase sees activity.
+  It only runs on the deployed site (not locally). Optionally set `CRON_SECRET` in Vercel so
+  only Vercel's cron can call it. Check it under Vercel → Project → **Cron Jobs**.
+- **Still worth doing:** open the app and check it a day or two before you fly.
+- **Treasurer sessions last 7 days** — expect to unlock Treasurer Mode again after a break.
+- Gemini keys and Vercel Hobby deployments don't expire from inactivity.
+
 ## 3. Running locally
 
 Requires Node.js 20+ (Node 22 LTS was installed for this build at `~/.local/node`).
@@ -130,6 +143,18 @@ restart). Tap **Load Demo Trip Data** on the home page to get a sample Japan tri
   pool). Switch to **Card** (someone paid by card and gets credited) or **Deposit**.
 - **Scan Receipt** — take/choose a photo → Gemini extracts merchant, date, currency, total,
   category and line items → fields are pre-filled.
+- **Pay out from kitty** — kitty cash handed to someone: paying back a person who covered a
+  shared cost with their own card/cash, or settling up. Shows how much they are owed with a
+  one-tap *Use* button, and warns if the kitty holds less. Payouts are not spending, so they
+  don't appear in analytics or budgets.
+- **Record settle-up payment** — one person pays another directly (cash, bank transfer,
+  PayPay…); the kitty isn't involved. Every line of the settlement plan has a **Record**
+  button that pre-fills the right form.
+- **Log refund** — money back from a shop, either as cash into the kitty or onto someone's
+  card; the shares are given back and analytics count it as negative spending.
+- **Split payment** — tick *Paid partly with kitty cash, partly by card* on a new expense;
+  it is saved as a kitty part and a card part with each person's share divided between them.
+- **Delete** — every transaction in the feed has Edit and Delete buttons in Treasurer Mode.
 - **Log Cash Deposit** — defaults to **Everyone, same amount**: enter the amount each person puts in, untick anyone who isn't contributing, and one deposit per person is saved in a single step. Switch to **One person** for an individual top-up.
 - Split modes: **Equally** (tick people), **Custom** (amount per person, must add up),
   **Line items** (assign each receipt item to people; tax/tip/service spread
@@ -153,9 +178,12 @@ units to avoid floating-point drift.
 | `CASH_DEPOSIT` | `+amount` | `+amount` (depositor) | — |
 | `CASH_EXPENSE` | `−amount` | — | `−share` each |
 | `CARD_EXPENSE` | — | `+amount` | `−share` each |
+| `CASH_PAYOUT` | `−amount` | `−amount` (recipient: received cash) | — |
+| `TRANSFER` (settle-up) | — | `+amount` (payer) | receiver `−amount` |
+| `REFUND` | `+amount` if cash back to kitty | card refund: that person `−amount` | `+share` each (given back) |
 
-- `Expected cash in Treasurer's wallet = Σ deposits − Σ cash expenses`
-- `net = deposits + card paid − shares` (positive = is owed, negative = owes)
+- `Expected cash in Treasurer's wallet = Σ deposits − Σ cash expenses − Σ kitty payouts`
+- `net = deposits + card paid − shares − cash received from the kitty` (positive = is owed, negative = owes)
 - Members of a family (mini-group) are summed and settle as one unit.
 - Because Σ(net) equals the cash still in the kitty, leftover cash appears as a
   **Cash Kitty (Treasurer)** party in the settlement plan, so the Treasurer hands it back.
@@ -248,7 +276,7 @@ Full SQL: [`supabase/schema.sql`](../supabase/schema.sql).
 | `trips` | `id`, `name`, `base_currency` (default `JPY`), `created_at` |
 | `mini_groups` | `id`, `trip_id` → trips (cascade), `name` |
 | `participants` | `id`, `trip_id`, `mini_group_id` → mini_groups (set null), `name`, `is_treasurer`, `avatar_media_id` → media (set null) |
-| `transactions` | `id`, `trip_id`, `type` (`CASH_DEPOSIT`/`CASH_EXPENSE`/`CARD_EXPENSE`), `title`, `category`, `amount_local`, `currency`, `exchange_rate_to_base`, `amount_base`, `paid_by_participant_id`, `receipt_url`, `line_items` (JSONB, with `assignees`), `occurred_at` |
+| `transactions` | `id`, `trip_id`, `type` (`CASH_DEPOSIT`/`CASH_EXPENSE`/`CARD_EXPENSE`/`CASH_PAYOUT`/`TRANSFER`/`REFUND`), `title`, `category`, `amount_local`, `currency`, `exchange_rate_to_base`, `amount_base`, `paid_by_participant_id`, `receipt_url`, `line_items` (JSONB, with `assignees`), `occurred_at` |
 | `transaction_splits` | `id`, `transaction_id` (cascade), `participant_id` (cascade), `share_amount_base` |
 | `budget_items` | `id`, `trip_id`, `category`, `planned_amount_base`, `notes` |
 | `media` | `id`, `trip_id` (cascade), `kind` (`avatar`/`photo`), `participant_id` (cascade), `mime`, `data` (base64), `byte_size`, `width`, `height`, `caption`, `uploaded_by`, `created_at` |
@@ -282,6 +310,8 @@ Categories: Food & Drink, Transport, Accommodation, Flights, Activities, Shoppin
 | `/api/media/[id]` | GET | 🔓 | Image bytes (cached immutable) |
 | `/api/media/[id]` | PUT / DELETE | 🔒 | Edit caption / delete |
 | `/api/rates?base=JPY` | GET | 🔓 | Live reference exchange rates (cached 6 h) |
+| `/api/transactions/split-payment` | POST | 🔒 | One bill, part kitty cash + part card (two linked expenses) |
+| `/api/keepalive` | GET | 🔓 (or `CRON_SECRET`) | Daily ping so Supabase Free doesn't pause |
 | `/api/demo` | POST | 🔓 if empty, else 🔒 | Seed the Japan demo trip |
 
 ---
@@ -401,3 +431,9 @@ real photos from a phone's photo picker.
 5. **Supabase go-live** — tables created, clearer "tables not found" error.
 6. **OCR fix** — retired `gemini-2.5-flash` replaced by Flash-Lite with fallbacks and timeouts.
 7. **Group deposits** — "Everyone, same amount" is the default cash-deposit mode.
+9. **Settle-ups, refunds, split payments, delete button, keep-alive** — new `TRANSFER` and
+   `REFUND` types, `POST /api/transactions/split-payment`, Delete in the feed, daily
+   `/api/keepalive` Vercel Cron, and an example trip covering every scenario.
+8. **Kitty payouts** — new `CASH_PAYOUT` type for reimbursements and settling up from the
+   kitty; **Record** buttons on the kitty lines of the settlement plan. Requires re-running
+   `supabase/schema.sql` (updates the `transactions_type_check` constraint).

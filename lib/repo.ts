@@ -1,7 +1,7 @@
 import "server-only";
 import { bundleToBackup } from "./backup";
 import { getStore } from "./db/store";
-import { allocateCents, currencyDecimals, fromCents, round2, roundTo, splitByLineItems, splitEqually, toCents } from "./settlement";
+import { allocateCents, currencyDecimals, fromCents, round2, roundTo, splitByLineItems, splitEqually, splitSharesBetweenParts, toCents } from "./settlement";
 import type { BudgetItem, MediaItem, MiniGroup, Participant, Split, Transaction, Trip, TripBackup, TripBundle } from "./types";
 import * as v from "./validation";
 import { ValidationError } from "./validation";
@@ -162,6 +162,13 @@ export async function deleteParticipant(id: string) {
 // Transactions
 // ---------------------------------------------------------------------------
 
+const DEFAULT_TITLES: Partial<Record<string, string>> = {
+  CASH_DEPOSIT: "Cash deposit",
+  CASH_PAYOUT: "Paid from kitty",
+  TRANSFER: "Settle-up payment",
+  REFUND: "Refund",
+};
+
 async function parseTransaction(body: unknown, tripIdOverride?: string) {
   const o = v.obj(body);
   const trip_id = tripIdOverride ?? v.uuid(o.trip_id, "trip_id");
@@ -181,12 +188,27 @@ async function parseTransaction(body: unknown, tripIdOverride?: string) {
 
   let paid_by = v.uuidOrNull(o.paid_by_participant_id, "paid_by_participant_id");
   if (paid_by && !ids.has(paid_by)) throw new ValidationError("Payer is not on this trip");
-  if ((type === "CASH_DEPOSIT" || type === "CARD_EXPENSE") && !paid_by)
-    throw new ValidationError(type === "CASH_DEPOSIT" ? "Choose who deposited the cash" : "Choose who paid by card");
+  const needsPerson: Partial<Record<typeof type, string>> = {
+    CASH_DEPOSIT: "Choose who deposited the cash",
+    CARD_EXPENSE: "Choose who paid by card",
+    CASH_PAYOUT: "Choose who received the cash",
+    TRANSFER: "Choose who paid",
+  };
+  if (needsPerson[type] && !paid_by) throw new ValidationError(needsPerson[type]!);
+  // REFUND: paid_by = who got the money back (card refund); empty = cash back into the kitty.
   if (type === "CASH_EXPENSE" && !paid_by) paid_by = participants.find((p) => p.is_treasurer)?.id ?? null;
 
   let splits: Split[] = [];
-  if (type !== "CASH_DEPOSIT") {
+  const isTransfer = type === "CASH_DEPOSIT" || type === "CASH_PAYOUT"; // moves cash, no splits
+  if (type === "TRANSFER") {
+    // Direct payment: exactly one receiver, who gets the full amount.
+    const first = Array.isArray(o.splits) ? (o.splits as unknown[])[0] : undefined;
+    const receiver = first ? v.uuidOrNull(v.obj(first).participant_id, "receiver") : null;
+    if (!receiver || !ids.has(receiver)) throw new ValidationError("Choose who received the payment");
+    if (receiver === paid_by) throw new ValidationError("Payer and receiver must be different people");
+    if (Array.isArray(o.splits) && o.splits.length > 1) throw new ValidationError("A settle-up payment has one receiver");
+    splits = [{ participant_id: receiver, share_amount_base: amount_base }];
+  } else if (!isTransfer) {
     if (!Array.isArray(o.splits) || o.splits.length === 0) throw new ValidationError("Choose at least one person to split with");
     const raw = (o.splits as unknown[]).map((s, i) => {
       const so = v.obj(s);
@@ -214,8 +236,8 @@ async function parseTransaction(body: unknown, tripIdOverride?: string) {
     row: {
       trip_id,
       type,
-      title: v.str(o.title ?? (type === "CASH_DEPOSIT" ? "Cash deposit" : ""), "title", { max: 120 }),
-      category: type === "CASH_DEPOSIT" ? "Other" : v.category(o.category),
+      title: v.str(o.title ?? DEFAULT_TITLES[type] ?? "", "title", { max: 120 }),
+      category: isTransfer || type === "TRANSFER" ? "Other" : v.category(o.category),
       amount_local,
       currency,
       exchange_rate_to_base,
@@ -259,6 +281,50 @@ export async function createGroupDeposits(body: unknown): Promise<Transaction[]>
   }
   const created = await db().insert<Transaction>("transactions", rows);
   return created.map((t) => ({ ...t, splits: [] }));
+}
+
+/**
+ * One bill paid partly from the kitty and partly by someone's card. Saved as two expenses
+ * (a CASH_EXPENSE and a CARD_EXPENSE) with every person's share divided between them in
+ * proportion, so each person still pays their full share of the bill.
+ */
+export async function createSplitPayment(body: unknown): Promise<Transaction[]> {
+  const o = v.obj(body);
+  // Validate the whole bill (amount, currency, splits) as if it were one kitty expense.
+  const { row: whole, splits } = await parseTransaction({ ...o, type: "CASH_EXPENSE" });
+  const trip = await getTrip(whole.trip_id);
+  const cardLocal = roundTo(v.num(o.card_amount_local, "card_amount_local", { positive: true, max: 1e9 }), currencyDecimals(whole.currency));
+  if (cardLocal >= whole.amount_local) throw new ValidationError("The card part must be less than the total");
+  const cardPayer = v.uuid(o.card_paid_by_participant_id, "card_paid_by_participant_id");
+  const people = await db().select<Participant>("participants", { trip_id: whole.trip_id });
+  if (!people.some((p) => p.id === cardPayer)) throw new ValidationError("Payer is not on this trip");
+
+  const baseDec = currencyDecimals(trip.base_currency);
+  const cardBase = roundTo(cardLocal * whole.exchange_rate_to_base, baseDec);
+  const kittyBase = round2(whole.amount_base - cardBase);
+  const { part: cardSplits, rest: kittySplits } = splitSharesBetweenParts(splits, cardBase, baseDec);
+  const titleKitty = v.str(o.title_kitty ?? `${whole.title} (kitty part)`, "title_kitty", { max: 120 });
+  const titleCard = v.str(o.title_card ?? `${whole.title} (card part)`, "title_card", { max: 120 });
+
+  const rows = await db().insert<Transaction>("transactions", [
+    { ...whole, title: titleKitty, amount_local: round2(whole.amount_local - cardLocal), amount_base: kittyBase },
+    { ...whole, type: "CARD_EXPENSE", title: titleCard, amount_local: cardLocal, amount_base: cardBase, paid_by_participant_id: cardPayer, line_items: null },
+  ]);
+  const kittyTx = rows.find((r) => r.type === "CASH_EXPENSE")!;
+  const cardTx = rows.find((r) => r.type === "CARD_EXPENSE")!;
+  try {
+    await db().insert("transaction_splits", [
+      ...kittySplits.map((x) => ({ ...x, transaction_id: kittyTx.id })),
+      ...cardSplits.map((x) => ({ ...x, transaction_id: cardTx.id })),
+    ]);
+  } catch (e) {
+    await db().remove("transactions", { id: rows.map((r) => r.id) });
+    throw e;
+  }
+  return [
+    { ...kittyTx, splits: kittySplits },
+    { ...cardTx, splits: cardSplits },
+  ];
 }
 
 export async function updateTransaction(id: string, body: unknown): Promise<Transaction> {
@@ -315,7 +381,17 @@ export async function deleteBudget(id: string) {
 // ---------------------------------------------------------------------------
 
 export async function loadDemoTrip(): Promise<Trip> {
-  const [trip] = await db().insert<Trip>("trips", [{ name: "Japan Spring Trip 2026", base_currency: "JPY" }]);
+  const [trip] = await db().insert<Trip>("trips", [{ name: "Japan Spring Trip 2026 (example)", base_currency: "JPY" }]);
+  try {
+    await seedDemoTrip(trip);
+  } catch (e) {
+    await deleteTrip(trip.id); // never leave a half-built example behind
+    throw e;
+  }
+  return trip;
+}
+
+async function seedDemoTrip(trip: Trip): Promise<void> {
   const [smith, jones] = await db().insert<MiniGroup>("mini_groups", [
     { trip_id: trip.id, name: "Smith Family" },
     { trip_id: trip.id, name: "Jones Family" },
@@ -343,11 +419,9 @@ export async function loadDemoTrip(): Promise<Trip> {
   await make({ type: "CARD_EXPENSE", title: "Return flights LHR–HND", category: "Flights", amount_local: 1850, currency: "GBP", exchange_rate_to_base: GBP, paid_by_participant_id: charlie.id, occurred_at: "2026-04-03", splits: equal(flights) });
   await make({ type: "CARD_EXPENSE", title: "Shinjuku apartment (6 nights)", category: "Accommodation", amount_local: 186000, paid_by_participant_id: bob.id, occurred_at: "2026-04-03", splits: equal(186000) });
 
-  // Everyone hands yen to Alice for the kitty
-  await make({ type: "CASH_DEPOSIT", title: "Kitty — yen from airport ATM", amount_local: 60000, paid_by_participant_id: alice.id, occurred_at: "2026-04-03" });
-  await make({ type: "CASH_DEPOSIT", title: "Kitty top-up", amount_local: 60000, paid_by_participant_id: charlie.id, occurred_at: "2026-04-03" });
-  await make({ type: "CASH_DEPOSIT", title: "Kitty top-up", amount_local: 30000, paid_by_participant_id: frank.id, occurred_at: "2026-04-03" });
-  await make({ type: "CASH_DEPOSIT", title: "Kitty top-up", amount_local: 20000, paid_by_participant_id: dana.id, occurred_at: "2026-04-06" });
+  // Everyone puts the same into the kitty (one deposit each), plus one individual top-up
+  await createGroupDeposits({ trip_id: trip.id, title: "Kitty — everyone's share", amount_local: 30000, currency: "JPY", occurred_at: "2026-04-03", participant_ids: all });
+  await make({ type: "CASH_DEPOSIT", title: "Kitty top-up", amount_local: 10000, paid_by_participant_id: frank.id, occurred_at: "2026-04-06" });
 
   // Mostly paid from the kitty in cash
   await kitty("Suica top-ups", "Transport", 15000, "2026-04-03");
@@ -383,6 +457,19 @@ export async function loadDemoTrip(): Promise<Trip> {
   await kitty("Don Quijote souvenirs", "Shopping", 9600, "2026-04-08", [dana.id, frank.id]);
   await kitty("Narita Express tickets", "Transport", 16350, "2026-04-09");
 
+  // Split payment: one dinner, part kitty cash (¥18,000), part Charlie's card (¥30,000)
+  await createSplitPayment({
+    trip_id: trip.id, title: "Kaiseki dinner in Gion", category: "Food & Drink", amount_local: 48000, currency: "JPY", occurred_at: "2026-04-06",
+    splits: equal(48000), card_amount_local: 30000, card_paid_by_participant_id: charlie.id,
+  });
+  // Refunds: cash back into the kitty, and a refund onto Alice's card
+  await make({ type: "REFUND", title: "Refund — returned souvenir", category: "Shopping", amount_local: 2400, occurred_at: "2026-04-08", paid_by_participant_id: null, splits: equal(2400, [dana.id, frank.id]) });
+  await make({ type: "REFUND", title: "Refund — Shinkansen seat change", category: "Transport", amount_local: 5000, occurred_at: "2026-04-05", paid_by_participant_id: alice.id, splits: equal(5000) });
+  // The kitty pays Bob back part of the apartment he put on his card
+  await make({ type: "CASH_PAYOUT", title: "Apartment payback (part)", amount_local: 25000, occurred_at: "2026-04-09", paid_by_participant_id: bob.id });
+  // Frank settles part of what he owes Charlie directly (PayPay)
+  await make({ type: "TRANSFER", title: "PayPay to Charlie", amount_local: 10000, occurred_at: "2026-04-09", paid_by_participant_id: frank.id, splits: [{ participant_id: charlie.id, share_amount_base: 10000 }] });
+
   await db().insert("budget_items", [
     { trip_id: trip.id, category: "Flights", planned_amount_base: 400000, notes: "Booked in January" },
     { trip_id: trip.id, category: "Accommodation", planned_amount_base: 180000, notes: "6 nights" },
@@ -390,7 +477,6 @@ export async function loadDemoTrip(): Promise<Trip> {
     { trip_id: trip.id, category: "Transport", planned_amount_base: 100000, notes: "Suica, Shinkansen, NEX" },
     { trip_id: trip.id, category: "Activities", planned_amount_base: 40000, notes: "Temples + tea ceremony" },
   ]);
-  return trip;
 }
 
 // ---------------------------------------------------------------------------

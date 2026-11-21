@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS participants (
 CREATE TABLE IF NOT EXISTS transactions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   trip_id UUID REFERENCES trips(id) ON DELETE CASCADE,
-  type TEXT NOT NULL CHECK (type IN ('CASH_DEPOSIT', 'CASH_EXPENSE', 'CARD_EXPENSE')),
+  type TEXT NOT NULL CHECK (type IN ('CASH_DEPOSIT', 'CASH_EXPENSE', 'CARD_EXPENSE', 'CASH_PAYOUT', 'TRANSFER', 'REFUND')),
   title TEXT NOT NULL,
   category TEXT NOT NULL DEFAULT 'Food & Drink',
   amount_local NUMERIC(12, 2) NOT NULL,
@@ -72,6 +72,12 @@ CREATE TABLE IF NOT EXISTS media (
 );
 
 ALTER TABLE participants ADD COLUMN IF NOT EXISTS avatar_media_id UUID REFERENCES media(id) ON DELETE SET NULL;
+
+-- Upgrade: allow every transaction type on databases created earlier
+-- (CASH_PAYOUT = kitty pays someone, TRANSFER = direct settle-up, REFUND = money back from a shop).
+ALTER TABLE transactions DROP CONSTRAINT IF EXISTS transactions_type_check;
+ALTER TABLE transactions ADD CONSTRAINT transactions_type_check
+  CHECK (type IN ('CASH_DEPOSIT', 'CASH_EXPENSE', 'CARD_EXPENSE', 'CASH_PAYOUT', 'TRANSFER', 'REFUND'));
 
 -- Indexes for the per-trip lookups the app makes
 CREATE INDEX IF NOT EXISTS mini_groups_trip_idx ON mini_groups(trip_id);
