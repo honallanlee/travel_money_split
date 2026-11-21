@@ -241,6 +241,26 @@ export async function createTransaction(body: unknown): Promise<Transaction> {
   return { ...tx, splits };
 }
 
+/**
+ * "Everyone pays the same into the kitty": one CASH_DEPOSIT per selected person, all for
+ * the same amount, written in a single insert so either all are saved or none are.
+ */
+export async function createGroupDeposits(body: unknown): Promise<Transaction[]> {
+  const o = v.obj(body);
+  if (!Array.isArray(o.participant_ids) || o.participant_ids.length === 0)
+    throw new ValidationError("Pick at least one person");
+  const ids = (o.participant_ids as unknown[]).map((x, i) => v.uuid(x, `participant_ids[${i}]`));
+  if (new Set(ids).size !== ids.length) throw new ValidationError("Duplicate participant in deposit");
+  if (ids.length > 200) throw new ValidationError("Too many people");
+  const rows = [];
+  for (const id of ids) {
+    const { row } = await parseTransaction({ ...o, type: "CASH_DEPOSIT", paid_by_participant_id: id, splits: [] });
+    rows.push(row);
+  }
+  const created = await db().insert<Transaction>("transactions", rows);
+  return created.map((t) => ({ ...t, splits: [] }));
+}
+
 export async function updateTransaction(id: string, body: unknown): Promise<Transaction> {
   const [existing] = await db().select<Transaction>("transactions", { id });
   if (!existing) throw new NotFoundError("Transaction not found");

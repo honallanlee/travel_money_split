@@ -316,6 +316,13 @@ export const ZH_HANT: Record<string, string> = {
   Saved: "已儲存",
   "Deposit logged": "已記錄存入",
   "Expense logged": "已記錄支出",
+  "Deposits logged": "已記錄存入",
+  "Amount each": "每人金額",
+  "Who is depositing?": "誰存入？",
+  "Everyone, same amount": "所有人相同金額",
+  "One person": "單一人",
+  "{n} people × {each} = {total} into the kitty": "{n} 人 × {each} = 共 {total} 存入公款",
+  "Duplicate participant in deposit": "存入名單中有重複的人",
 
   // CSV
   Type: "類型",
@@ -336,5 +343,10 @@ export const ZH_HANT: Record<string, string> = {
   "This trip has reached its photo limit": "此旅程的相片已達上限",
   "Exchange rates are unavailable right now — enter a rate manually": "暫時無法取得匯率 — 請手動輸入",
   "Something went wrong": "發生錯誤",
+  "Receipt scanning is busy (Gemini rate limit) — wait a minute and try again": "收據掃描繁忙中（Gemini 用量上限）— 請稍等一分鐘再試",
+  "Gemini rejected the API key — check GEMINI_API_KEY": "Gemini 拒絕了 API 金鑰 — 請檢查 GEMINI_API_KEY",
+  "No supported Gemini model is available for this API key — set GEMINI_MODEL": "此 API 金鑰沒有可用的 Gemini 模型 — 請設定 GEMINI_MODEL",
+  "Gemini is overloaded or slow right now — try again in a moment, or enter the details by hand": "Gemini 目前繁忙或回應緩慢 — 請稍後再試，或手動輸入資料",
+  "Receipt scanning failed — try again or enter the details by hand": "收據掃描失敗 — 請再試一次或手動輸入資料",
   "Database tables not found — run supabase/schema.sql in the Supabase SQL Editor": "找不到資料表 — 請在 Supabase SQL Editor 執行 supabase/schema.sql",
 };

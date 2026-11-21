@@ -105,6 +105,10 @@ export default function TransactionModal({
   const scannedOnce = useRef(false);
 
   const isDeposit = type === "CASH_DEPOSIT";
+  // New deposits default to "everyone puts in the same amount"; editing an existing deposit is always one person.
+  const [depositMode, setDepositMode] = useState<"everyone" | "single">(state.mode === "new" ? "everyone" : "single");
+  const [depositors, setDepositors] = useState<string[]>(() => people.map((p) => p.id));
+  const groupDeposit = isDeposit && depositMode === "everyone";
   const foreign = currency !== base;
   const amountLocal = Number(amount) || 0;
   const rateNum = foreign ? Number(rate) || 0 : 1;
@@ -218,9 +222,13 @@ export default function TransactionModal({
           ? t("Enter an amount")
           : foreign && rateNum <= 0
             ? t("Enter the exchange rate")
-            : (type !== "CASH_EXPENSE" && !paidBy)
-              ? t("Choose who paid")
-              : splitResult.problem;
+            : groupDeposit && depositors.length === 0
+              ? t("Pick at least one person")
+              : (type !== "CASH_EXPENSE" && !groupDeposit && !paidBy)
+                ? t("Choose who paid")
+                : splitResult.problem;
+  const depositorIds = people.map((p) => p.id).filter((id) => depositors.includes(id));
+  const totalBase = groupDeposit ? amountBase * depositorIds.length : amountBase;
 
   const save = async () => {
     if (formProblem) return setError(formProblem);
@@ -245,11 +253,25 @@ export default function TransactionModal({
       line_items: lineItems,
       splits: splitResult.splits,
     };
-    const ok = await run(
-      () =>
-        state.mode === "edit" ? api(`/api/transactions/${state.tx.id}`, "PUT", payload) : api("/api/transactions", "POST", payload),
-      state.mode === "edit" ? "Saved" : isDeposit ? "Deposit logged" : "Expense logged",
-    );
+    const ok = groupDeposit
+      ? await run(
+          () =>
+            api("/api/transactions/deposits", "POST", {
+              trip_id: bundle.trip.id,
+              title: payload.title,
+              amount_local: amountLocal,
+              currency,
+              exchange_rate_to_base: rateNum,
+              occurred_at: date,
+              participant_ids: depositorIds,
+            }),
+          "Deposits logged",
+        )
+      : await run(
+          () =>
+            state.mode === "edit" ? api(`/api/transactions/${state.tx.id}`, "PUT", payload) : api("/api/transactions", "POST", payload),
+          state.mode === "edit" ? "Saved" : isDeposit ? "Deposit logged" : "Expense logged",
+        );
     setSaving(false);
     if (ok) onClose();
   };
@@ -279,7 +301,7 @@ export default function TransactionModal({
             )}
             <Button className="flex-1" onClick={save} disabled={saving || scanning}>
               {saving ? t("Saving…") : state.mode === "edit" ? t("Save changes") : t("Save")}
-              {amountBase > 0 && !saving && <span className="tabular opacity-80">· {formatMoney(amountBase, base)}</span>}
+              {totalBase > 0 && !saving && <span className="tabular opacity-80">· {formatMoney(totalBase, base)}</span>}
             </Button>
           </div>
         </div>
@@ -343,7 +365,7 @@ export default function TransactionModal({
         </Field>
 
         <div className="grid grid-cols-[1fr_6.5rem] gap-2">
-          <Field label={t("Amount")}>
+          <Field label={groupDeposit ? t("Amount each") : t("Amount")}>
             <input
               type="number"
               inputMode="decimal"
@@ -397,7 +419,63 @@ export default function TransactionModal({
           </Field>
         </div>
 
-        {type !== "CASH_EXPENSE" ? (
+        {isDeposit && state.mode === "new" && (
+          <div>
+            <div className="grid grid-cols-2 gap-1 rounded-xl bg-stone-200/70 p-1" role="radiogroup" aria-label={t("Who is depositing?")}>
+              {(
+                [
+                  ["everyone", "Everyone, same amount"],
+                  ["single", "One person"],
+                ] as const
+              ).map(([m, label]) => (
+                <button
+                  key={m}
+                  role="radio"
+                  aria-checked={depositMode === m}
+                  onClick={() => setDepositMode(m)}
+                  className={cx("rounded-lg px-2 py-2 text-xs font-semibold", depositMode === m ? "bg-surface shadow-sm" : "text-ink-2")}
+                >
+                  {t(label)}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {groupDeposit ? (
+          <div>
+            <div className="mb-2 flex items-center justify-between">
+              <span className="text-xs font-medium text-ink-2">{t("Deposited by")}</span>
+              <span className="flex gap-3 text-xs font-medium text-brand">
+                <button onClick={() => setDepositors(people.map((p) => p.id))}>{t("All")}</button>
+                <button onClick={() => setDepositors([])}>{t("None")}</button>
+              </span>
+            </div>
+            <div className="rounded-2xl bg-surface ring-1 ring-line">
+              {people.map((p) => (
+                <label key={p.id} className="flex items-center gap-3 px-3 py-2.5">
+                  <input
+                    type="checkbox"
+                    className="h-5 w-5 accent-teal-700"
+                    checked={depositors.includes(p.id)}
+                    onChange={() => setDepositors((d) => toggle(d, p.id))}
+                  />
+                  <span className="flex-1 text-sm">{p.name}</span>
+                  <span className="tabular text-sm text-ink-2">{depositors.includes(p.id) && amountLocal > 0 ? formatMoney(amountLocal, currency) : "—"}</span>
+                </label>
+              ))}
+            </div>
+            {amountLocal > 0 && depositorIds.length > 0 && (
+              <p className="mt-2 text-xs text-ink-3">
+                {t("{n} people × {each} = {total} into the kitty", {
+                  n: depositorIds.length,
+                  each: formatMoney(amountLocal, currency),
+                  total: formatMoney(totalBase, base),
+                })}
+              </p>
+            )}
+          </div>
+        ) : type !== "CASH_EXPENSE" ? (
           <Field label={isDeposit ? t("Deposited by") : t("Paid by")}>
             <select className={inputCls} value={paidBy} onChange={(e) => setPaidBy(e.target.value)}>
               {people.map((p) => (

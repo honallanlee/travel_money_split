@@ -65,7 +65,7 @@ directly — public read-only viewers go through `GET /api/trips/[id]`.
 | `SUPABASE_SERVICE_ROLE_KEY` | Server-only key used by API routes |
 | `ADMIN_PASSWORD` | Treasurer Mode password |
 | `GEMINI_API_KEY` | Google AI Studio key for receipt OCR |
-| `GEMINI_MODEL` | Optional, defaults to `gemini-2.5-flash` |
+| `GEMINI_MODEL` | Optional; by default the app tries `gemini-3.5-flash-lite` → `gemini-3.1-flash-lite` → `gemini-3.8-flash` |
 | `SESSION_SECRET` | Optional; HMAC key for sessions (defaults to `ADMIN_PASSWORD`) |
 
 Set the same variables in Vercel → Project Settings → Environment Variables.

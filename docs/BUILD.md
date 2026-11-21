@@ -39,7 +39,7 @@ _Generated 21 Nov 2026 from the code in this repository._
 | `NEXT_PUBLIC_SUPABASE_URL` | **Yes** for saved data | Database address | Supabase dashboard → **Project Settings → API** (or **Data API**) → *Project URL* | Free tier available |
 | `SUPABASE_SERVICE_ROLE_KEY` | **Yes** for saved data | Server-side database access | Supabase dashboard → **Project Settings → API Keys** → `service_role` key (legacy tab) or a **secret** key (`sb_secret_…`) | Free tier available |
 | `GEMINI_API_KEY` | Optional | Receipt scanning (OCR) | [Google AI Studio](https://aistudio.google.com/apikey) → *Create API key* | Free tier available (rate-limited) |
-| `GEMINI_MODEL` | Optional | Override the OCR model (default `gemini-2.5-flash`) | — | — |
+| `GEMINI_MODEL` | Optional | Override the OCR model. Default: tries `gemini-3.5-flash-lite`, then `gemini-3.1-flash-lite`, then `gemini-3.8-flash` (see §16) | — | — |
 | `SESSION_SECRET` | Optional | Separate signing secret for Treasurer sessions (defaults to `ADMIN_PASSWORD`) | Any long random string | Free |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Not used | Listed in the original spec; the app never reads it | — | — |
 
@@ -130,7 +130,7 @@ restart). Tap **Load Demo Trip Data** on the home page to get a sample Japan tri
   pool). Switch to **Card** (someone paid by card and gets credited) or **Deposit**.
 - **Scan Receipt** — take/choose a photo → Gemini extracts merchant, date, currency, total,
   category and line items → fields are pre-filled.
-- **Log Cash Deposit** — someone hands cash to the Treasurer.
+- **Log Cash Deposit** — defaults to **Everyone, same amount**: enter the amount each person puts in, untick anyone who isn't contributing, and one deposit per person is saved in a single step. Switch to **One person** for an individual top-up.
 - Split modes: **Equally** (tick people), **Custom** (amount per person, must add up),
   **Line items** (assign each receipt item to people; tax/tip/service spread
   proportionally).
@@ -276,6 +276,7 @@ Categories: Food & Drink, Transport, Accommodation, Flights, Activities, Shoppin
 | `/api/participants` (+`/[id]`) | POST / PUT / DELETE | 🔒 | Travellers (`is_treasurer` is exclusive) |
 | `/api/transactions` (+`/[id]`) | POST / PUT / DELETE | 🔒 | Transactions with `splits[]` |
 | `/api/budgets` (+`/[id]`) | POST / PUT / DELETE | 🔒 | Budget lines |
+| `/api/transactions/deposits` | POST | 🔒 | Same-amount deposit for several people `{ trip_id, amount_local, currency, exchange_rate_to_base?, participant_ids[], title?, occurred_at? }` (one transaction each, single insert) |
 | `/api/ocr` | POST | 🔒 | Receipt image (multipart `file` or `{ image: base64 }`) → `{ merchant, date, currency, total, category, line_items[] }` |
 | `/api/media` | POST | 🔓 | Upload photo/avatar (multipart: `file`, `trip_id`, `kind`, `participant_id?`, `caption?`, `uploaded_by?`) |
 | `/api/media/[id]` | GET | 🔓 | Image bytes (cached immutable) |
@@ -376,6 +377,12 @@ real photos from a phone's photo picker.
   photos Supabase Storage would be more efficient.
 - **In-memory mode** (no Supabase keys) is for trying the app locally; on Vercel it would
   lose data between requests, so always set the Supabase keys in production.
+- **Receipt OCR model:** Google retired `gemini-2.5-flash` for new API keys (it returned
+  404). In testing on 21 Nov 2026 the full Flash models took 60 s+ or returned "high
+  demand", while `gemini-3.5-flash-lite` read a test receipt perfectly in ~1.5 s. The route
+  tries Flash-Lite first, falls back on 404/timeout/overload, gives each attempt 20 s and
+  stops by ~50 s so it fits Vercel's 60 s function limit. Errors are shown as short
+  messages, not raw Google JSON.
 - Recharts 2.x is used (v3 exists); upgrading is optional.
 
 ---
@@ -391,3 +398,6 @@ real photos from a phone's photo picker.
 3. **Backups, photos & Chinese** — JSON/CSV download, Treasurer restore, offline copy;
    Photos tab with avatars; English / Traditional Chinese switch.
 4. **Docs** — this document; `.env.example` clarified (required vs optional keys).
+5. **Supabase go-live** — tables created, clearer "tables not found" error.
+6. **OCR fix** — retired `gemini-2.5-flash` replaced by Flash-Lite with fallbacks and timeouts.
+7. **Group deposits** — "Everyone, same amount" is the default cash-deposit mode.

@@ -78,17 +78,74 @@ function normalise(raw: Record<string, unknown>): OcrResult {
   };
 }
 
+/**
+ * Tried in order. Flash-Lite reads receipts accurately in ~1–2 s; the full Flash models were
+ * benchmarked at 60 s+ or "high demand" (503), which would exceed Vercel's 60 s limit.
+ */
+const FALLBACK_MODELS = ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3.8-flash"];
+const ATTEMPT_TIMEOUT_MS = 20_000;
+const TOTAL_BUDGET_MS = 50_000;
+/** Errors where another model may succeed: not found/retired, overloaded, or timed out. */
+const RETRYABLE = new Set([404, 408, 500, 503, 504]);
+
+function geminiStatus(e: unknown): number | undefined {
+  if ((e as Error)?.name === "AbortError" || (e as Error)?.name === "TimeoutError") return 408;
+  const s = (e as { status?: unknown })?.status;
+  if (typeof s === "number") return s;
+  const m = /"code"\s*:\s*(\d{3})/.exec(String((e as Error)?.message ?? ""));
+  return m ? Number(m[1]) : undefined;
+}
+
+/** Turn Gemini SDK errors into short, user-readable messages (never raw JSON). */
+function geminiError(e: unknown) {
+  const status = geminiStatus(e);
+  const msg = String((e as Error)?.message ?? "");
+  console.error("[ocr] Gemini error", status, msg.slice(0, 500));
+  if (status === 429) return errorJson("Receipt scanning is busy (Gemini rate limit) — wait a minute and try again", 429);
+  if (status === 400 && /api key/i.test(msg)) return errorJson("Gemini rejected the API key — check GEMINI_API_KEY", 502);
+  if (status === 401 || status === 403) return errorJson("Gemini rejected the API key — check GEMINI_API_KEY", 502);
+  if (status === 404) return errorJson("No supported Gemini model is available for this API key — set GEMINI_MODEL", 502);
+  if (status === 408 || status === 503 || status === 504)
+    return errorJson("Gemini is overloaded or slow right now — try again in a moment, or enter the details by hand", 503);
+  return errorJson("Receipt scanning failed — try again or enter the details by hand", 502);
+}
+
 export const POST = treasurerRoute(async (req: Request) => {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey || apiKey.startsWith("your_")) return errorJson("Receipt scanning isn't configured (GEMINI_API_KEY missing)", 501);
 
   const image = await readImage(req);
   const ai = new GoogleGenAI({ apiKey });
-  const res = await ai.models.generateContent({
-    model: process.env.GEMINI_MODEL || "gemini-2.5-flash",
-    contents: [{ role: "user", parts: [{ inlineData: image }, { text: PROMPT }] }],
-    config: { responseMimeType: "application/json", responseSchema: schema, temperature: 0 },
-  });
+
+  // Google retires model versions for new keys and some models get overloaded, so try the
+  // configured model first, then fallbacks — each with its own timeout, within ~50 s overall.
+  const models = [...new Set([process.env.GEMINI_MODEL, ...FALLBACK_MODELS].filter(Boolean) as string[])];
+  const started = Date.now();
+  let res: Awaited<ReturnType<typeof ai.models.generateContent>> | null = null;
+  let lastErr: unknown = null;
+  for (const model of models) {
+    const remaining = TOTAL_BUDGET_MS - (Date.now() - started);
+    if (remaining < 3000) break;
+    try {
+      res = await ai.models.generateContent({
+        model,
+        contents: [{ role: "user", parts: [{ inlineData: image }, { text: PROMPT }] }],
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: schema,
+          temperature: 0,
+          abortSignal: AbortSignal.timeout(Math.min(ATTEMPT_TIMEOUT_MS, remaining)),
+        },
+      });
+      break;
+    } catch (e) {
+      lastErr = e;
+      const status = geminiStatus(e);
+      if (status !== undefined && !RETRYABLE.has(status)) break; // e.g. bad key or rate limit: another model won't help
+      console.warn(`[ocr] ${model} failed (${status ?? "timeout"}), trying next model`);
+    }
+  }
+  if (!res) return geminiError(lastErr);
 
   let parsed: Record<string, unknown>;
   try {
