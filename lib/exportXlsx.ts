@@ -433,7 +433,7 @@ export function buildTripWorkbook(Excel: ExcelJS, { bundle, guide, t = (k, v) =>
       row.getCell(5).value = prefix + it.title;
       row.getCell(6).value = [it.detail, it.duration, it.cost ? `¥${it.cost.toLocaleString("en")} pp` : ""].filter(Boolean).join(" · ");
       row.getCell(7).value = it.who ?? "";
-      if (it.address) row.getCell(8).value = { text: it.address, hyperlink: mapsUrl(it.address) };
+      if (it.address || it.map) row.getCell(8).value = { text: it.address ?? it.map!, hyperlink: mapsUrl(it.map && it.address ? `${it.map} ${it.address}` : it.address ?? it.map!) };
       if (it.phone) row.getCell(9).value = { text: it.phone, hyperlink: `tel:${telE164(it.phone)}` };
       row.getCell(10).value = (it.links ?? []).map((l) => `${l.label}: ${l.url}`).join("\n");
       row.getCell(11).value = [...(it.alert ? [`⚠ ${it.alert}`] : []), ...(it.notes ?? []), ...(it.private ?? [])].join("\n");
@@ -457,7 +457,7 @@ export function buildTripWorkbook(Excel: ExcelJS, { bundle, guide, t = (k, v) =>
       row.getCell(4).value = t("Hotel");
       row.getCell(5).value = s.name + (s.who ? ` (${s.who})` : "");
       row.getCell(6).value = [s.checkIn && `Check-in ${s.checkIn}`, s.checkOut && `Check-out ${s.checkOut}`].filter(Boolean).join(" · ");
-      if (s.address) row.getCell(8).value = { text: s.address, hyperlink: mapsUrl(s.address) };
+      if (s.address || s.map) row.getCell(8).value = { text: s.address ?? s.map!, hyperlink: mapsUrl(s.map && s.address ? `${s.map} ${s.address}` : s.address ?? s.map!) };
       if (s.phone) row.getCell(9).value = { text: s.phone, hyperlink: `tel:${telE164(s.phone)}` };
       row.getCell(10).value = (s.links ?? []).map((l) => `${l.label}: ${l.url}`).join("\n");
       row.getCell(11).value = [...(s.rooms ?? []), ...(s.notes ?? []), ...(s.private ?? [])].join("\n");

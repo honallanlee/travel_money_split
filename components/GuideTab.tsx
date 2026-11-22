@@ -551,7 +551,7 @@ function ItemRow({
             <Info className="mt-px h-3.5 w-3.5 shrink-0 text-ink-3" /> {n}
           </p>
         ))}
-        <Contact address={item.address} phone={item.phone} />
+        <Contact address={item.address} map={item.map} phone={item.phone} />
         {item.links && <Links links={item.links} />}
         <Private lines={item.private} has={item.hasPrivate} unlocked={unlocked} />
         {item.options && item.options.length > 0 && (
@@ -611,7 +611,7 @@ function StayCard({ stay, unlocked, fmt, controls }: { stay: GuideStay; unlocked
           <Info className="mt-px h-3.5 w-3.5 shrink-0 text-ink-3" /> {n}
         </p>
       ))}
-      <Contact address={stay.address} phone={stay.phone} />
+      <Contact address={stay.address} map={stay.map} phone={stay.phone} />
       {stay.links && <Links links={stay.links} />}
       <Private lines={stay.private} has={stay.hasPrivate} unlocked={unlocked} />
     </Card>
@@ -658,13 +658,19 @@ function WeatherTable({ weather, fmt, today }: { weather: GuideWeather; fmt: Fmt
   );
 }
 
-function Contact({ address, phone }: { address?: string; phone?: string }) {
-  if (!address && !phone) return null;
+function Contact({ address, map, phone }: { address?: string; map?: string; phone?: string }) {
+  const { t } = useT();
+  if (!address && !map && !phone) return null;
   return (
     <div className="space-y-1">
       {address && (
-        <a href={mapsUrl(address)} target="_blank" rel="noreferrer" className="flex items-start gap-1.5 text-xs text-indigo-700 underline-offset-2 hover:underline">
+        <a href={mapsUrl(map ? `${map} ${address}` : address)} target="_blank" rel="noreferrer" className="flex items-start gap-1.5 text-xs text-indigo-700 underline-offset-2 hover:underline">
           <MapPin className="mt-px h-3.5 w-3.5 shrink-0" /> {address}
+        </a>
+      )}
+      {!address && map && (
+        <a href={mapsUrl(map)} target="_blank" rel="noreferrer" className="flex items-start gap-1.5 text-xs text-indigo-700 underline-offset-2 hover:underline">
+          <MapPin className="mt-px h-3.5 w-3.5 shrink-0" /> {t("Google Maps: {place}", { place: map })}
         </a>
       )}
       {phone && (

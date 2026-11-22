@@ -200,6 +200,8 @@ export interface GuideItem {
   /** highlighted warning, e.g. "Closed on Thursday & Friday" */
   alert?: string;
   address?: string;
+  /** Google Maps search text (place name + town) when there is no exact address */
+  map?: string;
   phone?: string;
   links?: GuideLink[];
   /** alternatives shown under "or" */
@@ -245,6 +247,7 @@ export interface GuideStay {
   rooms?: string[];
   nights: string[]; // YYYY-MM-DD
   address?: string;
+  map?: string;
   phone?: string;
   checkIn?: string;
   checkOut?: string;

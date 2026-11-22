@@ -614,4 +614,6 @@ export const ZH_HANT: Record<string, string> = {
   "TRANSFER — one person paid another directly (Paid by = payer; the receiver's share = full amount)": "TRANSFER — 一人直接付款給另一人（付款人 = 支付者；收款人的分攤 = 全數）",
   "REFUND — money back from a shop (Paid by = who got it, or empty if it went into the kitty; shares = what each person gets back)": "REFUND — 商店退款（付款人 = 收款人，如退回公款則留空；分攤 = 每人退回金額）",
   "Net: positive = is owed money, negative = owes money. Sum of everyone's net = cash left in the kitty.": "淨額：正數 = 應收，負數 = 應付。所有人淨額總和 = 公款剩餘現金。",
+  "Google Maps: {place}": "Google 地圖：{place}",
+  "Map search (place name + town)": "地圖搜尋（地點名稱 + 地區）",
 };

@@ -240,6 +240,7 @@ function ItemForm({ initial, busy, onSubmit }: { initial: GuideItem; busy: boole
     cost: initial.cost ? String(initial.cost) : "",
     alert: initial.alert ?? "",
     address: initial.address ?? "",
+    map: initial.map ?? "",
     phone: initial.phone ?? "",
     notes: (initial.notes ?? []).join("\n"),
     links: linksTo(initial.links),
@@ -261,6 +262,7 @@ function ItemForm({ initial, busy, onSubmit }: { initial: GuideItem; busy: boole
           cost: Number(f.cost) > 0 ? Math.round(Number(f.cost)) : undefined,
           alert: opt(f.alert),
           address: opt(f.address),
+          map: opt(f.map),
           phone: opt(f.phone),
           notes: optList(lines(f.notes)),
           links: optList(linksFrom(f.links)),
@@ -289,6 +291,7 @@ function ItemForm({ initial, busy, onSubmit }: { initial: GuideItem; busy: boole
       </div>
       <Text label={t("Warning (optional)")} value={f.alert} onChange={set("alert")} />
       <Text label={t("Address")} value={f.address} onChange={set("address")} />
+      <Text label={t("Map search (place name + town)")} value={f.map} onChange={set("map")} placeholder="上杉神社 米沢" />
       <Text label={t("Phone")} value={f.phone} onChange={set("phone")} />
       <Area label={t("Notes (one per line)")} value={f.notes} onChange={set("notes")} />
       <Area label={t("Links (label | https://…, one per line)")} value={f.links} onChange={set("links")} rows={2} />
@@ -312,6 +315,7 @@ function StayForm({ initial, busy, onSubmit }: { initial: GuideStay; busy: boole
     who: initial.who ?? "",
     nights: initial.nights.join("\n"),
     address: initial.address ?? "",
+    map: initial.map ?? "",
     phone: initial.phone ?? "",
     checkIn: initial.checkIn ?? "",
     checkOut: initial.checkOut ?? "",
@@ -333,6 +337,7 @@ function StayForm({ initial, busy, onSubmit }: { initial: GuideStay; busy: boole
           who: opt(f.who),
           nights,
           address: opt(f.address),
+          map: opt(f.map),
           phone: opt(f.phone),
           checkIn: opt(f.checkIn),
           checkOut: opt(f.checkOut),
@@ -347,6 +352,7 @@ function StayForm({ initial, busy, onSubmit }: { initial: GuideStay; busy: boole
       <Text label={t("Who (optional)")} value={f.who} onChange={set("who")} />
       <Area label={t("Nights (YYYY-MM-DD, one per line)")} value={f.nights} onChange={set("nights")} rows={2} />
       <Text label={t("Address")} value={f.address} onChange={set("address")} />
+      <Text label={t("Map search (place name + town)")} value={f.map} onChange={set("map")} placeholder="上杉神社 米沢" />
       <Text label={t("Phone")} value={f.phone} onChange={set("phone")} />
       <div className="grid grid-cols-2 gap-2">
         <Text label={t("Check-in")} value={f.checkIn} onChange={set("checkIn")} placeholder="15:00" />
