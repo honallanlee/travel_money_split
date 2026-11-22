@@ -58,9 +58,9 @@ export default function Home() {
 
   return (
     <main className="mx-auto min-h-dvh max-w-md px-4 pb-16 pt-[max(1rem,env(safe-area-inset-top))]">
-      <header className="flex items-center justify-between py-3">
+      <header className="flex items-center justify-between gap-2 py-3">
         <div className="flex items-center gap-2">
-          <div className="grid h-9 w-9 place-items-center rounded-xl bg-brand text-white">
+          <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-brand text-white">
             <Plane className="h-5 w-5" />
           </div>
           <div>

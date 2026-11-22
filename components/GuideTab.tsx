@@ -208,7 +208,7 @@ export default function GuideTab({
           {guide.subtitle && <p className="mt-1 text-xs leading-relaxed text-sky-100">{guide.subtitle}</p>}
           <p className="mt-2 text-sm font-semibold">
             {fmt(guide.startDate, { day: "numeric", month: "short" })} – {fmt(guide.endDate, { day: "numeric", month: "short", year: "numeric" })}
-            {status && <span className="ml-2 rounded-full bg-white/15 px-2 py-0.5 text-xs font-medium">{status}</span>}
+            {status && <span className="ml-2 inline-block whitespace-nowrap rounded-full bg-white/15 px-2 py-0.5 text-xs font-medium">{status}</span>}
           </p>
         </div>
         {editing && (

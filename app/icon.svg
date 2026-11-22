@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="46 34 148 148" role="img" aria-label="Cartoon traveller peeking over a suitcase, with snowy Mount Fuji behind">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8fd3e8"/><stop offset="1" stop-color="#e9f7f4"/></linearGradient>
+    <linearGradient id="fuji" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#6f93c4"/><stop offset="1" stop-color="#a9c6e0"/></linearGradient>
+    <radialGradient id="skin" cx=".5" cy=".42" r=".65"><stop offset="0" stop-color="#ffe3cc"/><stop offset=".7" stop-color="#f9cfae"/><stop offset="1" stop-color="#e9ae86"/></radialGradient>
+    <linearGradient id="hair" x1=".2" y1="0" x2=".8" y2="1"><stop offset="0" stop-color="#8a5a3c"/><stop offset=".55" stop-color="#5f3a25"/><stop offset="1" stop-color="#422617"/></linearGradient>
+    <linearGradient id="case" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#17968a"/><stop offset="1" stop-color="#0b5d56"/></linearGradient>
+    <linearGradient id="jacket" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3a4763"/><stop offset="1" stop-color="#252f45"/></linearGradient>
+    <radialGradient id="iris" cx=".5" cy=".6" r=".6"><stop offset="0" stop-color="#a5683a"/><stop offset="1" stop-color="#4d2a14"/></radialGradient>
+    <clipPath id="round"><rect x="46" y="34" width="148" height="148" rx="36"/></clipPath>
+  </defs>
+
+  <g clip-path="url(#round)">
+    <rect width="240" height="240" fill="url(#sky)"/>
+    <circle cx="199" cy="88" r="16" fill="#ff7d66"/>
+    <!-- Mount Fuji -->
+    <path d="M-18 186 L46 78 Q56 66 66 78 L132 186 Z" fill="url(#fuji)"/>
+    <path d="M30 105 L46 78 Q56 66 66 78 L82 105 L74 100 L66 108 L57 99 L48 109 L39 100 Z" fill="#fff"/>
+    <path d="M110 186 Q160 132 250 172 V240 H110 Z" fill="#cfe6ea"/>
+    <path d="M-10 190 Q60 168 130 190 T260 186 V250 H-10 Z" fill="#f4fbfc"/>
+
+    <!-- plane and trail -->
+    <g class="av-plane">
+      <path d="M84 36 Q110 14 142 22" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-dasharray="1 8"/>
+      <g transform="translate(160 27) rotate(10) scale(.95)" fill="#fff" stroke="#3b6f8f" stroke-width="1.2" stroke-linejoin="round">
+        <path d="M-13 0 L9 -3 Q15 -2 15 0 Q15 2 9 3 Z"/><path d="M1 -1 L-6 -11 L-2 -11 L7 -2 Z"/><path d="M1 1 L-6 11 L-2 11 L7 2 Z"/><path d="M-11 0 L-15 -6 L-12 -6 L-8 0 Z"/>
+      </g>
+    </g>
+
+    <g transform="translate(12 18) scale(.9)">
+    <!-- shoulders: navy jacket, orange piping -->
+    <path d="M8 262 Q10 170 78 162 H162 Q230 170 232 262 Z" fill="url(#jacket)"/>
+    <path d="M66 168 Q44 178 36 214" fill="none" stroke="#ff8a3c" stroke-width="3.5" stroke-linecap="round"/>
+    <path d="M174 168 Q196 178 204 214" fill="none" stroke="#ff8a3c" stroke-width="3.5" stroke-linecap="round"/>
+    <!-- scarf -->
+    <path d="M74 158 Q120 182 166 158 L170 176 Q120 202 70 176 Z" fill="#d9483f"/>
+
+    <!-- ears + earbuds -->
+    <ellipse cx="66" cy="116" rx="10" ry="14" fill="#f1bb95"/><ellipse cx="174" cy="116" rx="10" ry="14" fill="#f1bb95"/>
+    <g fill="#fff" stroke="#cfd6dc" stroke-width=".8"><rect x="63" y="119" width="6.5" height="17" rx="3.2"/><circle cx="67.5" cy="119" r="5.4"/><rect x="170.500" y="119" width="6.500" height="17" rx="3.200"/><circle cx="172.500" cy="119" r="5.400"/></g>
+
+    <!-- head -->
+    <path d="M69 104 Q66 58 120 56 Q174 58 171 104 Q171 160 120 168 Q69 160 69 104 Z" fill="url(#skin)"/>
+    <!-- short sides -->
+    <path d="M68 108 Q62 70 84 58 L92 74 Q78 82 75 108 Z" fill="#573420"/><path d="M172 108 Q178 70 156 58 L148 74 Q162 82 165 108 Z" fill="#573420"/>
+    <!-- swept-up quiff -->
+    <path d="M71 86 Q62 52 84 40 Q92 24 122 24 Q150 18 168 36 Q182 52 170 86 Q164 72 150 70 Q128 78 100 70 Q80 70 71 86 Z" fill="url(#hair)"/>
+    <path d="M84 62 Q92 38 124 34 M100 66 Q110 44 140 36 M122 68 Q136 50 158 46" fill="none" stroke="#a9744f" stroke-opacity=".55" stroke-width="3" stroke-linecap="round"/>
+
+    <!-- brows -->
+    <path d="M84 97 Q97 89 110 95" fill="none" stroke="#4a2b1a" stroke-width="6" stroke-linecap="round"/><path d="M130 95 Q143 89 156 97" fill="none" stroke="#4a2b1a" stroke-width="6" stroke-linecap="round"/>
+    <!-- eyes -->
+    <g class="av-eyes">
+      <ellipse cx="97" cy="118" rx="14" ry="14.500" fill="#fff"/><ellipse cx="143" cy="118" rx="14" ry="14.500" fill="#fff"/>
+      <g class="av-iris"><circle cx="98" cy="118.500" r="10" fill="url(#iris)"/><circle cx="142" cy="118.500" r="10" fill="url(#iris)"/><circle cx="98" cy="118.500" r="5" fill="#1b0e07"/><circle cx="142" cy="118.500" r="5" fill="#1b0e07"/><circle cx="101.500" cy="114.500" r="3" fill="#fff"/><circle cx="145.500" cy="114.500" r="3" fill="#fff"/></g>
+      <path d="M82.500 114 Q97 98 111.500 114" fill="none" stroke="#3a2114" stroke-width="3" stroke-linecap="round"/><path d="M128.500 114 Q143 98 157.500 114" fill="none" stroke="#3a2114" stroke-width="3" stroke-linecap="round"/>
+    </g>
+    <path d="M115 134 Q120 138 125 134" fill="none" stroke="#d99a72" stroke-width="3" stroke-linecap="round"/>
+    <ellipse cx="82" cy="136" rx="9" ry="5" fill="#f58f7b" opacity=".4"/><ellipse cx="158" cy="136" rx="9" ry="5" fill="#f58f7b" opacity=".4"/>
+
+    <!-- suitcase -->
+        <rect x="54" y="148" width="132" height="112" rx="15" fill="url(#case)"/>
+    <path d="M76 150 V260 M164 150 V260" stroke="#084a45" stroke-opacity=".55" stroke-width="4"/>
+    <path d="M66 153 H174" stroke="#6fd2c6" stroke-opacity=".55" stroke-width="3" stroke-linecap="round"/>
+    <path d="M54 168 V163 Q54 148 69 148 H76 Z M186 168 V163 Q186 148 171 148 H164 Z" fill="#f0b64a"/>
+
+    <rect x="102" y="157" width="36" height="8" rx="4" fill="#063f3b"/><rect x="106" y="158.500" width="28" height="3" rx="1.500" fill="#0e7c72"/>
+
+    <!-- stickers -->
+    <g transform="translate(121 200)"><circle r="22" fill="#fff"/><g fill="#d9483f"><path d="M-17 -13 Q0 -9 17 -13 L16 -8 Q0 -5 -16 -8 Z"/><rect x="-13" y="-4" width="26" height="3.500"/><rect x="-11" y="-8" width="4" height="23"/><rect x="7" y="-8" width="4" height="23"/></g></g>
+    <g transform="translate(91 186) rotate(-10)"><rect x="-11" y="-8" width="22" height="16" rx="3" fill="#ffe9a8"/><path d="M-9 6 L-2 -5 L2 1 L4 -2 L9 6 Z" fill="#3f78b5"/></g>
+    <g transform="translate(152 188) rotate(10)"><circle r="10" fill="#a9d8f5"/><path d="M0 -7 V7 M-6 -3.500 L6 3.500 M-6 3.500 L6 -3.500" stroke="#fff" stroke-width="2.400" stroke-linecap="round"/></g>
+    <g transform="translate(90 222) rotate(8)"><rect x="-12" y="-7" width="24" height="14" rx="2.500" fill="#fff"/><circle r="4.200" fill="#d9483f"/></g>
+
+    <!-- sleeves + cuffs -->
+    <path d="M22 236 Q34 190 56 170" fill="none" stroke="#2f3b56" stroke-width="25" stroke-linecap="round"/><path d="M218 236 Q206 190 184 170" fill="none" stroke="#2f3b56" stroke-width="25" stroke-linecap="round"/>
+    <path d="M45 163 L64 177" stroke="#ff8a3c" stroke-width="5.500" stroke-linecap="round"/><path d="M195 163 L176 177" stroke="#ff8a3c" stroke-width="5.500" stroke-linecap="round"/>
+
+    <!-- fingers over the top edge -->
+    <g fill="#f9cfae" stroke="#d99a72" stroke-width="1.400"><rect x="55" y="140" width="10" height="20" rx="5"/><rect x="65" y="138" width="10" height="22" rx="5"/><rect x="75" y="139" width="10" height="21" rx="5"/><rect x="155" y="139" width="10" height="21" rx="5"/><rect x="165" y="138" width="10" height="22" rx="5"/><rect x="175" y="140" width="10" height="20" rx="5"/></g>
+    </g>
+
+    <!-- snow -->
+    <g class="av-snow" fill="#fff"><circle cx="30" cy="48" r="3.200"/><circle cx="58" cy="26" r="2.400"/><circle cx="92" cy="14" r="2"/><circle cx="214" cy="92" r="3"/><circle cx="206" cy="130" r="2.200"/><circle cx="18" cy="104" r="2.400"/><circle cx="152" cy="10" r="2.200"/><circle cx="34" cy="150" r="2.600"/></g>
+  </g>
+</svg>

@@ -1,5 +1,5 @@
 "use client";
-import { CheckCircle2, ChevronDown, Pencil, Trash2, Users, Wallet } from "lucide-react";
+import { CheckCircle2, ChevronDown, Pencil, ReceiptText, Trash2, Users, Wallet } from "lucide-react";
 import { useMemo, useState } from "react";
 import { isExpense } from "@/lib/analytics";
 import { formatMoney, round2, type Ledger } from "@/lib/settlement";
@@ -53,6 +53,7 @@ export default function FeedTab({
 
       {byDay.length === 0 && bundle.participants.length > 0 && (
         <Card className="mt-4 p-6 text-center text-sm text-ink-2">
+          <ReceiptText className="mx-auto mb-2 h-7 w-7 text-ink-3" aria-hidden />
           {t("No transactions yet.")}{unlocked ? " " + t("Tap Add to log the first one.") : ""}
         </Card>
       )}

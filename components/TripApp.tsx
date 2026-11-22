@@ -14,6 +14,7 @@ import {
   ListOrdered,
   Lock,
   LockOpen,
+  LoaderCircle,
   Menu,
   Plus,
   Receipt,
@@ -176,7 +177,12 @@ export default function TripApp({ tripId }: { tripId: string }) {
     );
   }
   if (!bundle || !ledger) {
-    return <main className="mx-auto max-w-md p-6 text-center text-ink-3">{t("Loading trip…")}</main>;
+    return (
+      <main className="mx-auto flex max-w-md flex-col items-center gap-2 p-10 text-center text-ink-3">
+        <LoaderCircle className="h-6 w-6 text-brand motion-safe:animate-spin" aria-hidden />
+        {t("Loading trip…")}
+      </main>
+    );
   }
 
   const cur = bundle.trip.base_currency;
