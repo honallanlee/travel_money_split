@@ -334,6 +334,19 @@ export function simplifyDebts(entities: { id: string; name: string; net: number 
   return transfers;
 }
 
+export const OUTSIDE_ID = "__outside__";
+
+/**
+ * How a family's settlement is shared out between its members. The family pays or receives
+ * `familyNet` in the group plan; this works out which member hands over or keeps that money,
+ * and who pays whom inside the family, so that afterwards every member is square.
+ * Transfers to/from OUTSIDE_ID are the member's part of the family's payments in the plan.
+ */
+export function splitWithinFamily(members: { id: string; name: string; net: number }[]): Transfer[] {
+  const familyNet = fromCents(members.reduce((a, m) => a + toCents(m.net), 0));
+  return simplifyDebts([...members, { id: OUTSIDE_ID, name: "", net: -familyNet }]);
+}
+
 export interface Ledger {
   pool: CashPool;
   balances: Record<string, ParticipantBalance>;

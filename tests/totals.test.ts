@@ -123,3 +123,21 @@ describe("login lockout counter", () => {
     expect(later.failures).toBe(1);
   });
 });
+
+import { OUTSIDE_ID, splitWithinFamily } from "@/lib/settlement";
+
+describe("splitWithinFamily", () => {
+  it("shares a family's settlement so every member ends square (example from the demo trip)", () => {
+    // Charlie is owed 271,834, Dana owes 136,496 → the family receives 135,338 in the plan
+    const x = splitWithinFamily([
+      { id: "c", name: "Charlie", net: 271834 },
+      { id: "d", name: "Dana", net: -136496 },
+    ]);
+    expect(x).toContainEqual(expect.objectContaining({ from_id: OUTSIDE_ID, to_id: "c", amount: 135338 }));
+    expect(x).toContainEqual(expect.objectContaining({ from_id: "d", to_id: "c", amount: 136496 }));
+    // everyone square afterwards
+    const net: Record<string, number> = { c: 271834, d: -136496, [OUTSIDE_ID]: -135338 };
+    for (const t of x) { net[t.from_id] += t.amount; net[t.to_id] -= t.amount; }
+    expect(Object.values(net).every((v) => Math.abs(v) < 0.01)).toBe(true);
+  });
+});

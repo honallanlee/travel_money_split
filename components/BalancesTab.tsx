@@ -1,7 +1,7 @@
 "use client";
 import { ArrowRight, Check, ChevronDown, Copy, Share2, Wallet } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { computeLedger, formatWhatsAppSummary, KITTY_ID, type Ledger, type SettlementEntity } from "@/lib/settlement";
+import { computeLedger, formatWhatsAppSummary, KITTY_ID, OUTSIDE_ID, splitWithinFamily, type Ledger, type SettlementEntity } from "@/lib/settlement";
 import type { TripBundle } from "@/lib/types";
 import { useT } from "@/lib/i18n";
 import { useDisplay } from "./DisplayCurrency";
@@ -45,7 +45,6 @@ export default function BalancesTab({
   const personLedger = useMemo(() => computeLedger(bundle, { individual: true }), [bundle]);
   const byPerson = mode === "person" || !hasFamilies;
   const ledger = byPerson ? personLedger : familyLedger;
-  const nameOf = (id: string) => bundle.participants.find((p) => p.id === id)?.name ?? "";
   const d = useDisplay();
   const { t } = useT();
   const kittyName = ledger.treasurerName ? t("Cash Kitty ({name})", { name: ledger.treasurerName }) : t("Cash Kitty");
@@ -96,14 +95,6 @@ export default function BalancesTab({
   };
 
   const sorted = [...ledger.entities].sort((a, b) => b.net - a.net);
-  /** For a family line in the plan: how much of it belongs to each member. */
-  const memberParts = (entityId: string) => {
-    const ent = ledger.entities.find((e) => e.id === entityId);
-    if (!ent || ent.kind !== "group") return null;
-    const parts = ent.member_ids.map((id) => ({ id, net: ledger.balances[id]?.net ?? 0 })).filter((m) => Math.abs(m.net) >= 0.005);
-    return parts.length ? parts : null;
-  };
-
   return (
     <div>
       {hasFamilies && (
@@ -164,21 +155,6 @@ export default function BalancesTab({
                   <span className="font-semibold">{partyName(x.from_id, x.from_name)}</span>
                   <ArrowRight className="mx-1 inline h-3.5 w-3.5 text-ink-3" />
                   <span className="font-semibold">{partyName(x.to_id, x.to_name)}</span>
-                  {[x.from_id, x.to_id].map((id) => {
-                    const parts = memberParts(id);
-                    if (!parts) return null;
-                    return (
-                      <span key={id} className="mt-0.5 block text-[11px] not-italic text-ink-3">
-                        {t("{family}:", { family: partyName(id, id === x.from_id ? x.from_name : x.to_name) })}{" "}
-                        {parts.map((m, k) => (
-                          <span key={m.id}>
-                            {k > 0 && " · "}
-                            {nameOf(m.id)} <span className={m.net < 0 ? "text-neg" : "text-pos"}>{m.net < 0 ? t("owes") : t("is owed")} {d.fmt(Math.abs(m.net))}</span>
-                          </span>
-                        ))}
-                      </span>
-                    );
-                  })}
                 </span>
                 <Money amount={x.amount} className="font-bold" />
                 {unlocked && (
@@ -213,7 +189,7 @@ export default function BalancesTab({
       <p className="mt-2 px-1 text-xs text-ink-3">
         {byPerson
           ? t("Payments are minimised by pairing the biggest debtor with the biggest creditor. Everyone settles on their own.")
-          : t("Payments are minimised by pairing the biggest debtor with the biggest creditor. Family members are settled as one unit; the grey lines show each member's part.")}
+          : t("Payments are minimised by pairing the biggest debtor with the biggest creditor. Family members are settled as one unit; open a family above to see who pays or keeps what inside the family.")}
       </p>
     </div>
   );
@@ -235,6 +211,7 @@ function EntityCard({
   // Only show the "From kitty" column when someone in this group has actually received kitty cash.
   const showReceived = members.some((m) => m.b.received > 0);
   const showSettled = members.some((m) => Math.abs(m.b.settled) > 0.004);
+  const inside = e.kind === "group" ? splitWithinFamily(members.map((m) => ({ id: m.p.id, name: m.p.name, net: m.b.net }))) : [];
 
   return (
     <Card className="overflow-hidden">
@@ -297,8 +274,49 @@ function EntityCard({
               ))}
             </tbody>
           </table>
+        {inside.length > 0 && <InsideFamily family={e} transfers={inside} />}
         </div>
       )}
     </Card>
+  );
+}
+
+/** Plain-language split of a family's settlement between its members. */
+function InsideFamily({ family, transfers }: { family: SettlementEntity; transfers: ReturnType<typeof splitWithinFamily> }) {
+  const { t } = useT();
+  const d = useDisplay();
+  const pays = transfers.filter((x) => x.to_id === OUTSIDE_ID);
+  const keeps = transfers.filter((x) => x.from_id === OUTSIDE_ID);
+  const internal = transfers.filter((x) => x.from_id !== OUTSIDE_ID && x.to_id !== OUTSIDE_ID);
+  const square = Math.abs(family.net) < 0.005;
+  return (
+    <div className="mt-3 rounded-xl bg-surface p-2.5 ring-1 ring-line">
+      <p className="mb-1 text-xs font-semibold text-ink-2">{t("Inside the family")}</p>
+      <ul className="space-y-1 text-xs">
+        {!square && family.net < 0 && (
+          <li className="text-ink-3">{t("The family pays {amount} in the settlement plan:", { amount: d.fmt(-family.net) })}</li>
+        )}
+        {pays.map((x, i) => (
+          <li key={`p${i}`} className="pl-2">
+            • {t("{name} pays {amount} of it", { name: x.from_name, amount: d.fmt(x.amount) })}
+          </li>
+        ))}
+        {!square && family.net > 0 && (
+          <li className="text-ink-3">{t("The family receives {amount} in the settlement plan:", { amount: d.fmt(family.net) })}</li>
+        )}
+        {keeps.map((x, i) => (
+          <li key={`k${i}`} className="pl-2">
+            • {t("{name} keeps {amount} of it", { name: x.to_name, amount: d.fmt(x.amount) })}
+          </li>
+        ))}
+        {internal.length > 0 && <li className="pt-1 text-ink-3">{t("Then, between yourselves:")}</li>}
+        {internal.map((x, i) => (
+          <li key={`i${i}`} className="pl-2">
+            • {t("{from} pays {to} {amount}", { from: x.from_name, to: x.to_name, amount: d.fmt(x.amount) })}
+          </li>
+        ))}
+      </ul>
+      <p className="mt-1.5 text-[11px] text-ink-3">{t("After this, everyone in the family is square.")}</p>
+    </div>
   );
 }

@@ -625,4 +625,12 @@ export const ZH_HANT: Record<string, string> = {
   "Photo storage is full": "相片儲存空間已滿",
   "The database is nearly full — avatars are paused": "資料庫將滿 — 暫停上載頭像",
   "Too many uploads — try again in an hour": "上載次數過多 — 請一小時後再試",
+  "Inside the family": "家庭內部分配",
+  "The family pays {amount} in the settlement plan:": "結算方案中，此家庭共需支付 {amount}：",
+  "{name} pays {amount} of it": "{name} 負責其中 {amount}",
+  "The family receives {amount} in the settlement plan:": "結算方案中，此家庭共收回 {amount}：",
+  "{name} keeps {amount} of it": "{name} 收取其中 {amount}",
+  "Then, between yourselves:": "然後家庭內部：",
+  "After this, everyone in the family is square.": "完成後，家庭內每人均已結清。",
+  "Payments are minimised by pairing the biggest debtor with the biggest creditor. Family members are settled as one unit; open a family above to see who pays or keeps what inside the family.": "以最大欠款人配對最大債權人，盡量減少轉帳次數。家庭成員合併結算；點開上方的家庭，可查看家庭內誰付款、誰收款。",
 };
