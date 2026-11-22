@@ -73,6 +73,26 @@ CREATE TABLE IF NOT EXISTS media (
 
 ALTER TABLE participants ADD COLUMN IF NOT EXISTS avatar_media_id UUID REFERENCES media(id) ON DELETE SET NULL;
 
+-- Trip photos live in Supabase Storage (private bucket "trip-photos", 1 GB on Free); the media row
+-- keeps only the file paths. Avatars stay in the database (data column).
+ALTER TABLE media ADD COLUMN IF NOT EXISTS storage_path TEXT;
+ALTER TABLE media ADD COLUMN IF NOT EXISTS thumb_path TEXT;
+ALTER TABLE media ALTER COLUMN data DROP NOT NULL;
+ALTER TABLE media DROP CONSTRAINT IF EXISTS media_has_content;
+ALTER TABLE media ADD CONSTRAINT media_has_content CHECK (data IS NOT NULL OR storage_path IS NOT NULL);
+
+-- Private bucket: no public URLs, no policies (only the server's service-role key can read or write),
+-- 1.5 MB per file, images only.
+INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+VALUES ('trip-photos', 'trip-photos', false, 1500000, ARRAY['image/jpeg', 'image/png', 'image/webp'])
+ON CONFLICT (id) DO UPDATE SET public = false, file_size_limit = 1500000, allowed_mime_types = ARRAY['image/jpeg', 'image/png', 'image/webp'];
+
+-- Database size for the storage bar and the "database nearly full" guard (server only).
+CREATE OR REPLACE FUNCTION public.db_size_bytes() RETURNS bigint
+LANGUAGE sql STABLE SECURITY INVOKER SET search_path = '' AS $$ SELECT pg_database_size(current_database()) $$;
+REVOKE ALL ON FUNCTION public.db_size_bytes() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.db_size_bytes() TO service_role;
+
 -- Upgrade: allow every transaction type on databases created earlier
 -- (CASH_PAYOUT = kitty pays someone, TRANSFER = direct settle-up, REFUND = money back from a shop).
 ALTER TABLE transactions DROP CONSTRAINT IF EXISTS transactions_type_check;
@@ -146,3 +166,12 @@ ALTER TABLE trip_guides ENABLE ROW LEVEL SECURITY;
 ALTER TABLE trip_guide_versions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE prepaid_items ENABLE ROW LEVEL SECURITY;
 ALTER TABLE auth_attempts ENABLE ROW LEVEL SECURITY;
+
+-- Second layer: the app never uses the public (anon) or signed-in (authenticated) API roles, so they
+-- get no access to app tables or functions at all, now or for tables created later.
+REVOKE ALL ON ALL TABLES IN SCHEMA public FROM anon, authenticated;
+REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM anon, authenticated;
+REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA public FROM anon, authenticated;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM anon, authenticated;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM anon, authenticated;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE EXECUTE ON FUNCTIONS FROM anon, authenticated;

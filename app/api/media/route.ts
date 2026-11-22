@@ -1,5 +1,6 @@
 import { errorJson, json, publicRoute } from "@/lib/http";
 import { MAX_MEDIA_BYTES, uploadMedia } from "@/lib/repo";
+import { allowRequest } from "@/lib/rateLimit";
 import { uuid, uuidOrNull } from "@/lib/validation";
 
 export const runtime = "nodejs";
@@ -14,10 +15,13 @@ function sniff(buf: Buffer): string | null {
 
 /**
  * Upload a trip photo or a traveller avatar. Open to anyone with the trip link (like the
- * read-only view), but limited to real JPEG/PNG/WebP images under 1.5 MB. Only the
- * Treasurer can delete.
+ * read-only view), but limited to real JPEG/PNG/WebP images under 1.5 MB, 60 uploads per
+ * device per hour, 500 photos per trip and the 1 GB photo storage. Only the Treasurer can delete.
+ * Photos go to Supabase Storage; avatars stay in the database.
  */
 export const POST = publicRoute(async (req: Request) => {
+  if (Number(req.headers.get("content-length") ?? 0) > 2 * MAX_MEDIA_BYTES) return errorJson("Image is too large (max 1.5 MB after compression)", 413);
+  if (!(await allowRequest(req, "upload", 60, 60 * 60_000))) return errorJson("Too many uploads — try again in an hour", 429);
   const form = await req.formData();
   const file = form.get("file");
   if (!(file instanceof File)) return errorJson("Attach an image as 'file'", 400);
@@ -27,6 +31,12 @@ export const POST = publicRoute(async (req: Request) => {
   if (!mime) return errorJson("Only JPEG, PNG or WebP images are allowed", 415);
 
   const kind = form.get("kind") === "avatar" ? "avatar" : "photo";
+  const thumbFile = form.get("thumb");
+  let thumb: Buffer | null = null;
+  if (kind === "photo" && thumbFile instanceof File && thumbFile.size <= 300_000) {
+    const t = Buffer.from(await thumbFile.arrayBuffer());
+    if (sniff(t) === "image/jpeg") thumb = t;
+  }
   const int = (k: string) => {
     const x = Number(form.get(k));
     return Number.isFinite(x) && x > 0 && x < 20000 ? Math.round(x) : null;
@@ -39,6 +49,7 @@ export const POST = publicRoute(async (req: Request) => {
     participant_id: uuidOrNull(form.get("participant_id"), "participant_id"),
     mime,
     data,
+    thumb,
     width: int("width"),
     height: int("height"),
     caption: text("caption", 200),

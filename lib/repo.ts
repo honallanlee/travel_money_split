@@ -1,8 +1,9 @@
 import "server-only";
+import { randomUUID } from "node:crypto";
 import { bundleToBackup } from "./backup";
 import { getStore } from "./db/store";
 import { allocateCents, currencyDecimals, fromCents, round2, roundTo, splitByLineItems, splitEqually, splitSharesBetweenParts, toCents } from "./settlement";
-import { PREPAID_STATUSES, type BudgetItem, type GuideItem, type GuideStay, type MediaItem, type MiniGroup, type Participant, type PrepaidItem, type PrepaidStatus, type Split, type Transaction, type Trip, type TripBackup, type TripBundle, type TripGuide } from "./types";
+import { PREPAID_STATUSES, type BudgetItem, type GuideItem, type GuideStay, type MediaItem, type MiniGroup, type Participant, type PrepaidItem, type PrepaidStatus, type Split, type StorageUsage, type Transaction, type Trip, type TripBackup, type TripBundle, type TripGuide } from "./types";
 import * as v from "./validation";
 import { ValidationError } from "./validation";
 
@@ -87,7 +88,9 @@ export async function updateTrip(id: string, body: unknown): Promise<Trip> {
 }
 
 export async function deleteTrip(id: string) {
+  const photos = await db().select<MediaRow>("media", { trip_id: id, kind: "photo" }, "id,storage_path,thumb_path");
   await db().remove("trips", { id });
+  await removeObjectsQuietly(objectPaths(photos));
 }
 
 // ---------------------------------------------------------------------------
@@ -488,6 +491,30 @@ async function seedDemoTrip(trip: Trip): Promise<void> {
 const MEDIA_META = "id,trip_id,kind,participant_id,width,height,caption,uploaded_by,created_at";
 export const MAX_MEDIA_BYTES = 1_500_000; // after client-side compression
 const MAX_PHOTOS_PER_TRIP = 500;
+/** Supabase Free includes 1 GB of file storage for the whole project. */
+export const PHOTO_STORAGE_LIMIT = 1_000_000_000;
+/** Uploads stop a little before the limit so the project never goes over. */
+const PHOTO_STORAGE_STOP = 0.95 * PHOTO_STORAGE_LIMIT;
+/** Supabase Free includes a 500 MB database per project. */
+export const DATABASE_LIMIT = 500_000_000;
+/** Avatars (still in the database) stop well before the limit, so expenses can always be saved. */
+const DATABASE_STOP = 0.8 * DATABASE_LIMIT;
+
+const extFor = (mime: string) => (mime === "image/png" ? "png" : mime === "image/webp" ? "webp" : "jpg");
+
+type MediaRow = { id: string; trip_id: string; kind: string; byte_size: number | null; storage_path: string | null; thumb_path: string | null };
+
+/** Bytes used by trip photos in Supabase Storage (all trips: the 1 GB is shared by the project). */
+async function photoBytes(): Promise<{ used: number; count: number }> {
+  const rows = await db().select<MediaRow>("media", { kind: "photo" }, "id,byte_size,storage_path");
+  const inStorage = rows.filter((r) => r.storage_path);
+  return { used: inStorage.reduce((a, r) => a + n(r.byte_size), 0), count: inStorage.length };
+}
+
+export async function storageUsage(): Promise<StorageUsage> {
+  const [p, dbSize] = await Promise.all([photoBytes(), db().databaseSize().catch(() => null)]);
+  return { photos: { used: p.used, limit: PHOTO_STORAGE_LIMIT, count: p.count }, database: { used: dbSize, limit: DATABASE_LIMIT } };
+}
 
 export async function uploadMedia(input: {
   trip_id: string;
@@ -495,6 +522,8 @@ export async function uploadMedia(input: {
   participant_id: string | null;
   mime: string;
   data: Buffer;
+  /** small preview for the photo grid (photos only) */
+  thumb?: Buffer | null;
   width: number | null;
   height: number | null;
   caption: string;
@@ -502,40 +531,82 @@ export async function uploadMedia(input: {
 }): Promise<MediaItem> {
   await getTrip(input.trip_id);
   if (input.data.length > MAX_MEDIA_BYTES) throw new ValidationError("Image is too large");
+  const meta = {
+    trip_id: input.trip_id,
+    kind: input.kind,
+    mime: input.mime,
+    width: input.width,
+    height: input.height,
+    caption: input.caption || null,
+    uploaded_by: input.uploaded_by || null,
+  };
+
   if (input.kind === "avatar") {
     if (!input.participant_id) throw new ValidationError("Choose whose avatar this is");
     const [p] = await db().select<Participant>("participants", { id: input.participant_id, trip_id: input.trip_id });
     if (!p) throw new ValidationError("Traveller is not on this trip");
-  } else {
-    const existing = await db().select<{ id: string }>("media", { trip_id: input.trip_id, kind: "photo" }, "id");
-    if (existing.length >= MAX_PHOTOS_PER_TRIP) throw new ValidationError("This trip has reached its photo limit");
-  }
-  const [row] = await db().insert<{ id: string }>("media", [
-    {
-      trip_id: input.trip_id,
-      kind: input.kind,
-      participant_id: input.kind === "avatar" ? input.participant_id : null,
-      mime: input.mime,
-      data: input.data.toString("base64"),
-      byte_size: input.data.length,
-      width: input.width,
-      height: input.height,
-      caption: input.caption || null,
-      uploaded_by: input.uploaded_by || null,
-    },
-  ]);
-  if (input.kind === "avatar") {
-    const [p] = await db().select<Participant>("participants", { id: input.participant_id! });
+    if (input.data.length > 400_000) throw new ValidationError("Image is too large");
+    const size = await db().databaseSize().catch(() => null);
+    if (size !== null && size > DATABASE_STOP) throw new ValidationError("The database is nearly full — avatars are paused");
+    const [row] = await db().insert<{ id: string }>("media", [
+      { ...meta, participant_id: p.id, data: input.data.toString("base64"), byte_size: input.data.length },
+    ]);
     await db().update("participants", p.id, { avatar_media_id: row.id });
     if (p.avatar_media_id && p.avatar_media_id !== row.id) await db().remove("media", { id: p.avatar_media_id });
+    const [item] = await db().select<MediaItem>("media", { id: row.id }, MEDIA_META);
+    return item;
   }
-  const [meta] = await db().select<MediaItem>("media", { id: row.id }, MEDIA_META);
-  return meta;
+
+  // Trip photo → Supabase Storage (private bucket); only a small row goes in the database.
+  const existing = await db().select<{ id: string }>("media", { trip_id: input.trip_id, kind: "photo" }, "id");
+  if (existing.length >= MAX_PHOTOS_PER_TRIP) throw new ValidationError("This trip has reached its photo limit");
+  const thumb = input.thumb && input.thumb.length <= 300_000 ? input.thumb : null;
+  const bytes = input.data.length + (thumb?.length ?? 0);
+  const { used } = await photoBytes();
+  if (used + bytes > PHOTO_STORAGE_STOP) throw new ValidationError("Photo storage is full");
+
+  const id = randomUUID();
+  const storage_path = `${input.trip_id}/${id}.${extFor(input.mime)}`;
+  const thumb_path = thumb ? `${input.trip_id}/${id}_thumb.jpg` : null;
+  await db().putObject(storage_path, input.data, input.mime);
+  try {
+    if (thumb && thumb_path) await db().putObject(thumb_path, thumb, "image/jpeg");
+    await db().insert("media", [{ ...meta, id, participant_id: null, data: null, storage_path, thumb_path, byte_size: bytes }]);
+  } catch (e) {
+    await db().removeObjects([storage_path, ...(thumb_path ? [thumb_path] : [])]).catch(() => {});
+    throw e;
+  }
+  const [item] = await db().select<MediaItem>("media", { id }, MEDIA_META);
+  return item;
 }
 
-export async function getMedia(id: string): Promise<{ mime: string; data: Buffer } | null> {
-  const [m] = await db().select<{ mime: string; data: string }>("media", { id }, "mime,data");
-  return m ? { mime: m.mime, data: Buffer.from(m.data, "base64") } : null;
+export async function getMedia(id: string, size: "full" | "thumb" = "full"): Promise<{ mime: string; data: Buffer } | null> {
+  const [m] = await db().select<{ mime: string; data: string | null; storage_path: string | null; thumb_path: string | null }>(
+    "media",
+    { id },
+    "mime,data,storage_path,thumb_path",
+  );
+  if (!m) return null;
+  if (m.storage_path) {
+    const useThumb = size === "thumb" && m.thumb_path;
+    const buf = await db().getObject(useThumb ? m.thumb_path! : m.storage_path);
+    return buf ? { mime: useThumb ? "image/jpeg" : m.mime, data: buf } : null;
+  }
+  return m.data ? { mime: m.mime, data: Buffer.from(m.data, "base64") } : null;
+}
+
+/** Storage files of the given media rows (photos only; avatars live in the database). */
+function objectPaths(rows: Pick<MediaRow, "storage_path" | "thumb_path">[]) {
+  return rows.flatMap((r) => [r.storage_path, r.thumb_path]).filter((x): x is string => !!x);
+}
+
+async function removeObjectsQuietly(paths: string[]) {
+  if (!paths.length) return;
+  try {
+    await db().removeObjects(paths);
+  } catch (e) {
+    console.warn("[storage] could not delete files:", (e as Error).message);
+  }
 }
 
 export async function updateMedia(id: string, body: unknown): Promise<void> {
@@ -545,7 +616,9 @@ export async function updateMedia(id: string, body: unknown): Promise<void> {
 }
 
 export async function deleteMedia(id: string) {
+  const rows = await db().select<MediaRow>("media", { id }, "id,storage_path,thumb_path");
   await db().remove("media", { id });
+  await removeObjectsQuietly(objectPaths(rows));
 }
 
 // ---------------------------------------------------------------------------
@@ -652,6 +725,10 @@ export async function saveTripGuide(tripId: string, body: unknown): Promise<void
   if (prev) {
     try {
       await db().insert("trip_guide_versions", [{ trip_id: tripId, content: prev.content, saved_at: new Date().toISOString() }]);
+      // Keep the last 30 versions per trip so the history can't fill the database.
+      const versions = await db().select<{ id: string; saved_at: string }>("trip_guide_versions", { trip_id: tripId }, "id,saved_at");
+      const old = versions.sort((a, b) => b.saved_at.localeCompare(a.saved_at)).slice(30).map((x) => x.id);
+      if (old.length) await db().remove("trip_guide_versions", { id: old });
     } catch (e) {
       console.warn("[guide] could not keep the previous version (run supabase/schema.sql):", (e as Error).message);
     }

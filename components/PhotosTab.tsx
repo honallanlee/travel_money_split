@@ -5,12 +5,15 @@ import { api, prepareImage } from "@/lib/client";
 import { useT } from "@/lib/i18n";
 import type { MediaItem, Participant, TripBundle } from "@/lib/types";
 import type { RunMutation } from "./TripApp";
+import StorageBar from "./StorageBar";
 import { Avatar, Button, Card, cx, inputCls, Modal, SectionTitle } from "./ui";
 
-async function upload(fields: Record<string, string>, file: File, maxDim: number) {
+async function upload(fields: Record<string, string>, file: File, maxDim: number, withThumb = false) {
   const img = await prepareImage(file, maxDim);
   const fd = new FormData();
   fd.append("file", img.blob, "image.jpg");
+  // A small preview for the photo grid, so browsing doesn't download every full-size photo.
+  if (withThumb) fd.append("thumb", (await prepareImage(file, 480, 0.75)).blob, "thumb.jpg");
   fd.append("width", String(img.width));
   fd.append("height", String(img.height));
   for (const [k, v] of Object.entries(fields)) fd.append(k, v);
@@ -46,7 +49,7 @@ export default function PhotosTab({ bundle, unlocked, offline, run }: { bundle: 
     setBusy("photos");
     let done = 0;
     for (const f of files) {
-      const ok = await run(() => upload({ trip_id: tripId, kind: "photo", caption, uploaded_by: uploaderName }, f, 1600));
+      const ok = await run(() => upload({ trip_id: tripId, kind: "photo", caption, uploaded_by: uploaderName }, f, 1600, true));
       if (ok) done++;
     }
     setBusy(null);
@@ -101,6 +104,7 @@ export default function PhotosTab({ bundle, unlocked, offline, run }: { bundle: 
       </Card>
 
       <SectionTitle>{t("Trip photos")}</SectionTitle>
+      <StorageBar refreshKey={bundle.photos.length} />
       {!offline && (
         <Card className="mb-3 space-y-2 p-3">
           <div className="grid grid-cols-2 gap-2">
@@ -140,7 +144,7 @@ export default function PhotosTab({ bundle, unlocked, offline, run }: { bundle: 
           {bundle.photos.map((m) => (
             <button key={m.id} onClick={() => setViewing(m)} className="relative aspect-square overflow-hidden rounded-xl bg-stone-200" aria-label={m.caption ?? t("Photo")}>
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={`/api/media/${m.id}`} alt={m.caption ?? ""} loading="lazy" className="h-full w-full object-cover" />
+              <img src={`/api/media/${m.id}?size=thumb`} alt={m.caption ?? ""} loading="lazy" className="h-full w-full object-cover" />
             </button>
           ))}
         </div>
