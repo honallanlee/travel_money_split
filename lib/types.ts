@@ -177,12 +177,33 @@ export interface GuideDay {
   title: string;
   /** key into GuideTrip.stays for that night */
   stay?: string;
+  /** names in TripGuide.weather.places to show on this day */
+  weatherPlaces?: string[];
   items: GuideItem[];
+}
+
+export interface GuideWeatherDay {
+  hi: number | null;
+  lo: number | null;
+  text: string;
+}
+
+export interface GuideWeather {
+  title: string;
+  note?: string;
+  /** YYYY-MM-DD, one per column */
+  dates: string[];
+  /** lat/lon (optional) let the app fetch live forecasts and recorded weather for that place */
+  places: { name: string; lat?: number; lon?: number; days: GuideWeatherDay[] }[];
 }
 
 export interface GuideStay {
   key: string;
   name: string;
+  /** only some of the group stay here, e.g. "Ethan & Yue only" */
+  who?: string;
+  /** room allocation, e.g. "Amy & Peter — 1 double bed" */
+  rooms?: string[];
   nights: string[]; // YYYY-MM-DD
   address?: string;
   phone?: string;
@@ -209,6 +230,7 @@ export interface TripGuide {
   endDate: string;
   timezone?: string;
   flights?: GuideItem[];
+  weather?: GuideWeather;
   notes: GuideNote[];
   days: GuideDay[];
   stays: GuideStay[];

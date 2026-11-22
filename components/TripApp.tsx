@@ -73,29 +73,26 @@ export default function TripApp({ tripId }: { tripId: string }) {
   const [txModal, setTxModal] = useState<TxModalState | null>(null);
   const [guide, setGuide] = useState<TripGuide | null>(null);
 
-  // Read-only trip guide (itinerary). Re-fetched when Treasurer Mode changes, since booking
-  // references are only included for the Treasurer. Kept on the device for offline use.
+  // Trip guide (itinerary). Re-fetched when Treasurer Mode changes, since booking references
+  // are only included for the Treasurer. Kept on the device for offline use.
+  const loadGuide = useCallback(async () => {
+    try {
+      const r = await api<{ guide: TripGuide | null }>(`/api/trips/${tripId}/guide`);
+      setGuide(r.guide);
+      try {
+        if (r.guide) localStorage.setItem(guideCacheKey(tripId), JSON.stringify(r.guide));
+        else localStorage.removeItem(guideCacheKey(tripId));
+      } catch {}
+    } catch {
+      try {
+        const cached = localStorage.getItem(guideCacheKey(tripId));
+        if (cached) setGuide(JSON.parse(cached));
+      } catch {}
+    }
+  }, [tripId]);
   useEffect(() => {
-    let cancelled = false;
-    api<{ guide: TripGuide | null }>(`/api/trips/${tripId}/guide`)
-      .then((r) => {
-        if (cancelled) return;
-        setGuide(r.guide);
-        try {
-          if (r.guide) localStorage.setItem(guideCacheKey(tripId), JSON.stringify(r.guide));
-          else localStorage.removeItem(guideCacheKey(tripId));
-        } catch {}
-      })
-      .catch(() => {
-        try {
-          const cached = localStorage.getItem(guideCacheKey(tripId));
-          if (!cancelled && cached) setGuide(JSON.parse(cached));
-        } catch {}
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [tripId, tr.unlocked]);
+    loadGuide();
+  }, [loadGuide, tr.unlocked]);
 
   const visibleTabs = TABS.filter((x) => x.id !== "guide" || guide);
 
@@ -262,12 +259,23 @@ export default function TripApp({ tripId }: { tripId: string }) {
           {tab === "photos" && <PhotosTab bundle={bundle} unlocked={canEdit} offline={!!offline} run={run} />}
           {tab === "analytics" && <AnalyticsTab bundle={bundle} />}
           {tab === "planner" && <PlannerTab bundle={bundle} unlocked={canEdit} run={run} />}
-          {tab === "guide" && guide && <GuideTab guide={guide} unlocked={tr.unlocked} />}
+          {tab === "guide" && guide && (
+            <GuideTab
+              guide={guide}
+              unlocked={tr.unlocked}
+              canEdit={canEdit}
+              onSave={async (next) => {
+                const ok = await run(() => api(`/api/trips/${tripId}/guide`, "PUT", next), "Guide saved");
+                await loadGuide();
+                return ok;
+              }}
+            />
+          )}
           {tab === "guide" && !guide && <PlannerTab bundle={bundle} unlocked={canEdit} run={run} />}
         </main>
 
-        {/* Floating add button (Treasurer Mode) */}
-        {canEdit && (
+        {/* Floating add button (Treasurer Mode) — hidden on the Guide tab, where it would cover the edit controls */}
+        {canEdit && tab !== "guide" && (
           <div className="fixed bottom-20 right-[max(1rem,calc(50vw-14rem+1rem))] z-40 flex flex-col items-end gap-2">
             {fabOpen && (
               <div className="mb-1 flex flex-col items-end gap-2">

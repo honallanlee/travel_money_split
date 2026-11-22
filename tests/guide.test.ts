@@ -56,3 +56,25 @@ describe("trip guide privacy", () => {
     await expect(saveTripGuide(trip.id, { title: "x" })).rejects.toThrow();
   });
 });
+
+describe("guide editing helpers", () => {
+  it("detects a redacted copy so it is never saved over the full guide", async () => {
+    const { isRedacted } = await import("@/components/GuideEditor");
+    const trip = await createTrip({ name: "Redaction check", base_currency: "JPY" });
+    await saveTripGuide(trip.id, guide);
+    expect(isRedacted((await getTripGuide(trip.id, false))!)).toBe(true);
+    expect(isRedacted((await getTripGuide(trip.id, true))!)).toBe(false);
+  });
+
+  it("editGuide applies changes to a copy and strips display-only flags", async () => {
+    const { editGuide } = await import("@/components/GuideEditor");
+    const shown = { ...guide, days: [{ ...guide.days[0], items: [{ ...guide.days[0].items[1], hasPrivate: false }] }] };
+    const next = editGuide(shown, (g) => {
+      g.days[0].items.push({ kind: "note", title: "New" });
+      g.days[0].items.splice(0, 1);
+    });
+    expect(next.days[0].items).toEqual([{ kind: "note", title: "New" }]);
+    expect(shown.days[0].items[0].title).toBe("Walk"); // original untouched
+    expect(JSON.stringify(next)).not.toContain("hasPrivate");
+  });
+});
