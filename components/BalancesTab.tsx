@@ -6,7 +6,7 @@ import type { TripBundle } from "@/lib/types";
 import { useT } from "@/lib/i18n";
 import { useDisplay } from "./DisplayCurrency";
 import type { TxPrefill } from "./TransactionModal";
-import { Avatar, Button, Card, cx, Money, SectionTitle } from "./ui";
+import { AvatarCluster, Button, Card, cx, Money, SectionTitle } from "./ui";
 
 /** Opens the transaction form pre-filled to record one line of the settlement plan. */
 export type RecordSettlement = (type: "CASH_PAYOUT" | "CASH_DEPOSIT" | "TRANSFER", prefill: TxPrefill) => void;
@@ -239,11 +239,7 @@ function EntityCard({
   return (
     <Card className="overflow-hidden">
       <button onClick={() => setOpen((o) => !o)} className="flex w-full items-center gap-3 p-3 text-left" aria-expanded={open}>
-        <div className="flex w-12 shrink-0 -space-x-3">
-          {members.slice(0, 3).map((m) => (
-            <Avatar key={m.p.id} person={m.p} size={members.length > 1 ? 30 : 40} />
-          ))}
-        </div>
+        <AvatarCluster people={members.map((m) => m.p)} />
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-semibold">{e.name}</p>
           <p className="truncate text-xs text-ink-3">{e.kind === "group" ? members.map((m) => m.p.name).join(", ") : t("Solo traveller")}</p>

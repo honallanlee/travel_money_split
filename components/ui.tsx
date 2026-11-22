@@ -231,4 +231,53 @@ export function Avatar({
   );
 }
 
+/**
+ * Avatars for a family/group inside a fixed square, so they never spill under the text next
+ * to them: 1 face, a diagonal pair, or a 2×2 grid (with "+N" when there are more than 4).
+ */
+export function AvatarCluster({
+  people,
+  size = 48,
+}: {
+  people: Pick<Participant, "id" | "name" | "avatar_media_id">[];
+  size?: number;
+}) {
+  const box = { width: size, height: size };
+  if (people.length <= 1) {
+    return (
+      <span className="relative grid shrink-0 place-items-center" style={box}>
+        <Avatar person={people[0]} size={size - 4} />
+      </span>
+    );
+  }
+  if (people.length === 2) {
+    const s = Math.round(size * 0.62);
+    return (
+      <span className="relative shrink-0" style={box}>
+        <Avatar person={people[0]} size={s} className="absolute left-0 top-0" />
+        <Avatar person={people[1]} size={s} className="absolute bottom-0 right-0" />
+      </span>
+    );
+  }
+  const s = Math.floor((size - 2) / 2);
+  const shown = people.length > 4 ? people.slice(0, 3) : people.slice(0, 4);
+  const extra = people.length - shown.length;
+  return (
+    <span className="grid shrink-0 grid-cols-2 place-items-center gap-0.5" style={box}>
+      {shown.map((p, i) => (
+        // with 3 people, the third sits centred under the first two
+        <Avatar key={p.id} person={p} size={s} className={people.length === 3 && i === 2 ? "col-span-2" : undefined} />
+      ))}
+      {extra > 0 && (
+        <span
+          className="inline-grid shrink-0 place-items-center rounded-full bg-stone-200 font-semibold text-ink-2 ring-2 ring-surface"
+          style={{ width: s, height: s, fontSize: Math.max(9, s * 0.4) }}
+        >
+          +{extra}
+        </span>
+      )}
+    </span>
+  );
+}
+
 export const dayKey = (iso: string) => iso.slice(0, 10);
