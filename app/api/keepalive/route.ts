@@ -13,5 +13,15 @@ export const GET = publicRoute(async (req: Request) => {
   if (secret && req.headers.get("authorization") !== `Bearer ${secret}`) return errorJson("Unauthorized", 401);
   const store = getStore();
   const rows = await store.select<{ id: string }>("trips", {}, "id");
-  return json({ ok: true, storage: store.kind, trips: rows.length, at: new Date().toISOString() });
+  // Housekeeping: drop login/upload counters older than a day so the table can't grow without limit.
+  let cleared = 0;
+  try {
+    const cutoff = Date.now() - 24 * 60 * 60_000;
+    const stale = (await store.select<{ id: string; window_start: string; locked_until: string | null }>("auth_attempts", {}, "id,window_start,locked_until")).filter(
+      (r) => Date.parse(r.window_start) < cutoff && (!r.locked_until || Date.parse(r.locked_until) < Date.now()),
+    );
+    for (let i = 0; i < stale.length; i += 200) await store.remove("auth_attempts", { id: stale.slice(i, i + 200).map((r) => r.id) });
+    cleared = stale.length;
+  } catch {}
+  return json({ ok: true, storage: store.kind, trips: rows.length, cleared, at: new Date().toISOString() });
 });

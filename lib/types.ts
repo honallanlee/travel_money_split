@@ -141,6 +141,12 @@ export interface PrepaidItem {
   sort: number;
 }
 
+/** Usage of the 1 GB photo storage and the 500 MB database (shared by all trips). */
+export interface StorageUsage {
+  photos: { used: number; limit: number; count: number };
+  database: { used: number | null; limit: number };
+}
+
 export interface TripBundle {
   trip: Trip;
   mini_groups: MiniGroup[];

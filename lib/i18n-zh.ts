@@ -616,4 +616,13 @@ export const ZH_HANT: Record<string, string> = {
   "Net: positive = is owed money, negative = owes money. Sum of everyone's net = cash left in the kitty.": "淨額：正數 = 應收，負數 = 應付。所有人淨額總和 = 公款剩餘現金。",
   "Google Maps: {place}": "Google 地圖：{place}",
   "Map search (place name + town)": "地圖搜尋（地點名稱 + 地區）",
+  "Photo storage": "相片儲存空間",
+  "{used} of {limit}": "已用 {used}／共 {limit}",
+  "Storage is full — delete some photos to add more.": "儲存空間已滿 — 請刪除部分相片後再上載。",
+  "{n} photos · about {left} more fit": "{n} 張相片 · 約可再上載 {left} 張",
+  "{n} photo · about {left} more fit": "{n} 張相片 · 約可再上載 {left} 張",
+  "Database (expenses, itinerary, avatars)": "資料庫（開支、行程、頭像）",
+  "Photo storage is full": "相片儲存空間已滿",
+  "The database is nearly full — avatars are paused": "資料庫將滿 — 暫停上載頭像",
+  "Too many uploads — try again in an hour": "上載次數過多 — 請一小時後再試",
 };

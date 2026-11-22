@@ -18,8 +18,17 @@ type Row = Record<string, unknown> & { id: string };
 /** Equality filter; an array value means `IN (...)`. */
 export type Where = Record<string, string | string[]>;
 
+/** Private bucket for trip photos (Supabase Storage); avatars stay in the database. */
+export const PHOTO_BUCKET = "trip-photos";
+
 export interface Store {
   readonly kind: "supabase" | "memory";
+  /** File storage (trip photos). Paths look like "<tripId>/<mediaId>.jpg". */
+  putObject(path: string, data: Buffer, contentType: string): Promise<void>;
+  getObject(path: string): Promise<Buffer | null>;
+  removeObjects(paths: string[]): Promise<void>;
+  /** Database size in bytes, or null if unknown (needs the db_size_bytes() function from schema.sql). */
+  databaseSize(): Promise<number | null>;
   /** `columns` is a comma-separated list (default all) — used to skip heavy image data. */
   select<T>(table: Table, where?: Where, columns?: string): Promise<T[]>;
   insert<T>(table: Table, rows: Record<string, unknown>[]): Promise<T[]>;
@@ -68,6 +77,46 @@ class SupabaseStore implements Store {
     if (Object.values(where).some((v) => Array.isArray(v) && v.length === 0)) return;
     const { error } = await this.apply(this.client.from(table).delete(), where);
     if (error) throw new Error(`${table}: ${error.message}`);
+  }
+
+  private bucketReady = false;
+  /** Creates the private photo bucket on first use if schema.sql hasn't been re-run. */
+  private async ensureBucket() {
+    if (this.bucketReady) return;
+    const { data } = await this.client.storage.getBucket(PHOTO_BUCKET);
+    if (!data) {
+      const { error } = await this.client.storage.createBucket(PHOTO_BUCKET, {
+        public: false,
+        fileSizeLimit: 1_500_000,
+        allowedMimeTypes: ["image/jpeg", "image/png", "image/webp"],
+      });
+      if (error && !/already exists/i.test(error.message)) throw new Error(`storage: ${error.message}`);
+    }
+    this.bucketReady = true;
+  }
+
+  async putObject(path: string, data: Buffer, contentType: string): Promise<void> {
+    await this.ensureBucket();
+    const { error } = await this.client.storage.from(PHOTO_BUCKET).upload(path, data, { contentType, upsert: false, cacheControl: "31536000" });
+    if (error) throw new Error(`storage: ${error.message}`);
+  }
+
+  async getObject(path: string): Promise<Buffer | null> {
+    const { data, error } = await this.client.storage.from(PHOTO_BUCKET).download(path);
+    if (error || !data) return null;
+    return Buffer.from(await data.arrayBuffer());
+  }
+
+  async removeObjects(paths: string[]): Promise<void> {
+    for (let i = 0; i < paths.length; i += 100) {
+      const { error } = await this.client.storage.from(PHOTO_BUCKET).remove(paths.slice(i, i + 100));
+      if (error) throw new Error(`storage: ${error.message}`);
+    }
+  }
+
+  async databaseSize(): Promise<number | null> {
+    const { data, error } = await this.client.rpc("db_size_bytes");
+    return error || data == null ? null : Number(data);
   }
 }
 
@@ -127,8 +176,24 @@ const DEFAULTS: Partial<Record<Table, () => Record<string, unknown>>> = {
 type Tables = Record<Table, Row[]>;
 const g = globalThis as unknown as { __tms_memory?: Tables };
 
+const objects = ((globalThis as unknown as { __tms_objects?: Map<string, Buffer> }).__tms_objects ??= new Map());
+
 class MemoryStore implements Store {
   readonly kind = "memory" as const;
+
+  async putObject(path: string, data: Buffer): Promise<void> {
+    if (objects.has(path)) throw new Error("storage: The resource already exists");
+    objects.set(path, Buffer.from(data));
+  }
+  async getObject(path: string): Promise<Buffer | null> {
+    return objects.get(path) ?? null;
+  }
+  async removeObjects(paths: string[]): Promise<void> {
+    for (const p of paths) objects.delete(p);
+  }
+  async databaseSize(): Promise<number | null> {
+    return null;
+  }
   private get db(): Tables {
     g.__tms_memory ??= {
       trips: [],
