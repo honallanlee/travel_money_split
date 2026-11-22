@@ -4,12 +4,25 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError, compressImage } from "@/lib/client";
 import { computeLedger, currencyDecimals, formatMoney, round2, roundTo, splitByLineItems, splitByWeights, splitEqually, toCents } from "@/lib/settlement";
 import { CATEGORIES, CURRENCIES, type OcrResult, type Split, type Transaction, type TripBundle, type TxType } from "@/lib/types";
+import { todayIn } from "@/lib/dates";
 import { useT } from "@/lib/i18n";
 import type { RunMutation } from "./TripApp";
 import { Button, cx, Field, inputBase, inputCls, Modal } from "./ui";
 
 /** Pre-filled values, e.g. from a "Record payment" button on the settlement plan. */
-export type TxPrefill = { amount?: number; personId?: string; receiverId?: string; title?: string; singleDeposit?: boolean };
+export type TxPrefill = {
+  amount?: number;
+  personId?: string;
+  receiverId?: string;
+  title?: string;
+  singleDeposit?: boolean;
+  category?: string;
+  date?: string;
+  /** custom split: participant id → amount in the trip currency */
+  custom?: Record<string, number>;
+  /** a planned/prepaid cost this payment settles; it is marked "recorded" once the expense is saved */
+  prepaidId?: string;
+};
 export type TxModalState = { mode: "new"; type: TxType; scanFile?: File; prefill?: TxPrefill } | { mode: "edit"; tx: Transaction };
 type SplitMode = "equal" | "custom" | "items";
 type ItemDraft = { key: number; description: string; amount: string; assignees: string[] };
@@ -24,9 +37,8 @@ const TYPE_OPTIONS: { type: TxType; label: string; hint: string }[] = [
 ];
 
 let itemKey = 0;
-const today = () => new Date().toISOString().slice(0, 10);
 
-function initialState(state: TxModalState, bundle: TripBundle) {
+function initialState(state: TxModalState, bundle: TripBundle, timezone?: string) {
   const base = bundle.trip.base_currency;
   const everyone = bundle.participants.map((p) => p.id);
   const treasurer = bundle.participants.find((p) => p.is_treasurer)?.id ?? bundle.participants[0]?.id ?? "";
@@ -35,15 +47,15 @@ function initialState(state: TxModalState, bundle: TripBundle) {
     return {
       type: state.type,
       title: pre.title ?? "",
-      category: "Food & Drink" as string,
+      category: pre.category ?? ("Food & Drink" as string),
       amount: pre.amount ? String(pre.amount) : "",
       currency: base,
       rate: "1",
       paidBy: pre.personId ?? treasurer,
-      date: today(),
-      mode: "equal" as SplitMode,
-      selected: everyone,
-      custom: {} as Record<string, string>,
+      date: pre.date ?? todayIn(timezone),
+      mode: (pre.custom ? "custom" : "equal") as SplitMode,
+      selected: pre.custom ? Object.keys(pre.custom) : everyone,
+      custom: Object.fromEntries(Object.entries(pre.custom ?? {}).map(([id, v]) => [id, String(v)])) as Record<string, string>,
       items: [] as ItemDraft[],
     };
   }
@@ -79,17 +91,20 @@ export default function TransactionModal({
   bundle,
   run,
   onClose,
+  timezone,
 }: {
   state: TxModalState;
   bundle: TripBundle;
   run: RunMutation;
   onClose: () => void;
+  /** trip time zone (from the guide), so new entries default to the local date there */
+  timezone?: string;
 }) {
   const { t } = useT();
   const base = bundle.trip.base_currency;
   const people = bundle.participants;
   const nameOf = useMemo(() => Object.fromEntries(people.map((p) => [p.id, p.name])), [people]);
-  const init = useMemo(() => initialState(state, bundle), []); // eslint-disable-line react-hooks/exhaustive-deps
+  const init = useMemo(() => initialState(state, bundle, timezone), []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const [type, setType] = useState<TxType>(init.type);
   const [title, setTitle] = useState(init.title);
@@ -316,7 +331,13 @@ export default function TransactionModal({
         )
       : await run(
           () =>
-            state.mode === "edit" ? api(`/api/transactions/${state.tx.id}`, "PUT", payload) : api("/api/transactions", "POST", payload),
+            state.mode === "edit"
+              ? api(`/api/transactions/${state.tx.id}`, "PUT", payload)
+              : api<{ id: string }>("/api/transactions", "POST", payload).then(async (created) => {
+                  const link = state.prefill?.prepaidId;
+                  if (link) await api(`/api/prepaid/${link}`, "PUT", { status: "recorded", transaction_id: created.id });
+                  return created;
+                }),
           state.mode === "edit"
             ? "Saved"
             : isDeposit

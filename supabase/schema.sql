@@ -87,6 +87,41 @@ CREATE TABLE IF NOT EXISTS trip_guides (
   updated_at TIMESTAMPTZ DEFAULT now()
 );
 
+-- Previous versions of each trip guide, kept on every save so an overwrite can be undone.
+CREATE TABLE IF NOT EXISTS trip_guide_versions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  trip_id UUID REFERENCES trips(id) ON DELETE CASCADE,
+  content JSONB NOT NULL,
+  saved_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- Costs settled outside the app (hotels, flights booked before the trip) or still to pay on the spot.
+-- They count towards each person's trip total but never towards the kitty or the settle-up plan.
+-- shares = [{ "participant_id": "...", "amount": 123.45 }] in the item's own currency.
+CREATE TABLE IF NOT EXISTS prepaid_items (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  trip_id UUID REFERENCES trips(id) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  category TEXT NOT NULL DEFAULT 'Accommodation',
+  currency TEXT NOT NULL DEFAULT 'JPY',
+  exchange_rate_to_base NUMERIC(12, 6) NOT NULL DEFAULT 1.0,
+  status TEXT NOT NULL DEFAULT 'paid' CHECK (status IN ('paid', 'due', 'recorded')),
+  date DATE,
+  note TEXT,
+  shares JSONB NOT NULL DEFAULT '[]'::jsonb,
+  transaction_id UUID REFERENCES transactions(id) ON DELETE SET NULL,
+  sort INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- Treasurer login lockout (shared across server instances). id = 'global' or 'ip:<salted hash>'.
+CREATE TABLE IF NOT EXISTS auth_attempts (
+  id TEXT PRIMARY KEY,
+  failures INTEGER NOT NULL DEFAULT 0,
+  window_start TIMESTAMPTZ NOT NULL DEFAULT now(),
+  locked_until TIMESTAMPTZ
+);
+
 -- Indexes for the per-trip lookups the app makes
 CREATE INDEX IF NOT EXISTS mini_groups_trip_idx ON mini_groups(trip_id);
 CREATE INDEX IF NOT EXISTS participants_trip_idx ON participants(trip_id);
@@ -94,6 +129,8 @@ CREATE INDEX IF NOT EXISTS transactions_trip_idx ON transactions(trip_id, occurr
 CREATE INDEX IF NOT EXISTS splits_tx_idx ON transaction_splits(transaction_id);
 CREATE INDEX IF NOT EXISTS budget_items_trip_idx ON budget_items(trip_id);
 CREATE INDEX IF NOT EXISTS media_trip_idx ON media(trip_id, kind, created_at DESC);
+CREATE INDEX IF NOT EXISTS prepaid_items_trip_idx ON prepaid_items(trip_id);
+CREATE INDEX IF NOT EXISTS trip_guide_versions_trip_idx ON trip_guide_versions(trip_id, saved_at DESC);
 
 -- Row Level Security: all reads and writes go through the Next.js API using the
 -- service-role key (which bypasses RLS). Enabling RLS with no policies means the
@@ -106,3 +143,6 @@ ALTER TABLE transaction_splits ENABLE ROW LEVEL SECURITY;
 ALTER TABLE budget_items ENABLE ROW LEVEL SECURITY;
 ALTER TABLE media ENABLE ROW LEVEL SECURITY;
 ALTER TABLE trip_guides ENABLE ROW LEVEL SECURITY;
+ALTER TABLE trip_guide_versions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE prepaid_items ENABLE ROW LEVEL SECURITY;
+ALTER TABLE auth_attempts ENABLE ROW LEVEL SECURITY;

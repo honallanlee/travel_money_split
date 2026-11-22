@@ -10,7 +10,7 @@ export const GET = publicRoute(async (_req: Request, { params }: IdCtx) => {
   return json({ guide: await getTripGuide(id, await isTreasurer()) });
 });
 
-/** Load or replace the guide (Treasurer only; there is no in-app editor). */
+/** Replace the guide (Treasurer only; used by the in-app editor). The previous version is kept. */
 export const PUT = treasurerRoute(async (req: Request, { params }: IdCtx) => {
   const { id } = await params;
   await saveTripGuide(id, await readJson(req));

@@ -106,6 +106,41 @@ export interface BudgetItem {
   notes: string | null;
 }
 
+/**
+ * Costs settled outside the app, usually before the trip (hotels, flights booked at home),
+ * or costs still to pay on the spot. They count towards each person's trip total but never
+ * towards the kitty or the settle-up plan.
+ *  - paid:     already paid and settled between the travellers
+ *  - due:      not paid yet (e.g. pay at the hotel); shown as "to pay"
+ *  - recorded: paid during the trip and logged as an expense in the app, so not counted twice
+ */
+export type PrepaidStatus = "paid" | "due" | "recorded";
+export const PREPAID_STATUSES: PrepaidStatus[] = ["paid", "due", "recorded"];
+
+export interface PrepaidShare {
+  participant_id: string;
+  /** amount in the item's own currency */
+  amount: number;
+}
+
+export interface PrepaidItem {
+  id: string;
+  trip_id: string;
+  title: string;
+  category: string;
+  currency: string;
+  /** 1 unit of `currency` = this many units of the trip's base currency */
+  exchange_rate_to_base: number;
+  status: PrepaidStatus;
+  /** YYYY-MM-DD the cost relates to (e.g. the hotel night) */
+  date: string | null;
+  note: string | null;
+  shares: PrepaidShare[];
+  /** expense that recorded this payment (status "recorded") */
+  transaction_id: string | null;
+  sort: number;
+}
+
 export interface TripBundle {
   trip: Trip;
   mini_groups: MiniGroup[];
@@ -113,6 +148,8 @@ export interface TripBundle {
   transactions: Transaction[];
   budget_items: BudgetItem[];
   photos: MediaItem[];
+  /** missing on copies saved before this feature existed */
+  prepaid_items?: PrepaidItem[];
 }
 
 /** Portable backup file (see /api/trips/[id]/export and /api/import). */
@@ -125,6 +162,8 @@ export interface TripBackup {
   participants: { id: string; name: string; mini_group_id: string | null; is_treasurer: boolean }[];
   transactions: Omit<Transaction, "trip_id" | "created_at">[];
   budget_items: Omit<BudgetItem, "id" | "trip_id">[];
+  /** added later; older backups don't have it */
+  prepaid_items?: Omit<PrepaidItem, "id" | "trip_id" | "transaction_id">[];
 }
 
 export interface OcrResult {
@@ -152,7 +191,7 @@ export interface GuideItem {
   kind: GuideItemKind;
   title: string;
   detail?: string;
-  /** who this applies to, e.g. "Allan + Deborah" */
+  /** who this applies to, e.g. "Alex + Sam" */
   who?: string;
   duration?: string;
   /** cost per person in JPY */
@@ -161,6 +200,8 @@ export interface GuideItem {
   /** highlighted warning, e.g. "Closed on Thursday & Friday" */
   alert?: string;
   address?: string;
+  /** Google Maps search text (place name + town) when there is no exact address */
+  map?: string;
   phone?: string;
   links?: GuideLink[];
   /** alternatives shown under "or" */
@@ -200,12 +241,13 @@ export interface GuideWeather {
 export interface GuideStay {
   key: string;
   name: string;
-  /** only some of the group stay here, e.g. "Ethan & Yue only" */
+  /** only some of the group stay here, e.g. "Alex & Sam only" */
   who?: string;
-  /** room allocation, e.g. "Amy & Peter — 1 double bed" */
+  /** room allocation, e.g. "Alex & Sam — 1 double bed" */
   rooms?: string[];
   nights: string[]; // YYYY-MM-DD
   address?: string;
+  map?: string;
   phone?: string;
   checkIn?: string;
   checkOut?: string;

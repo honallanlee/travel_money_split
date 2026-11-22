@@ -38,6 +38,9 @@ import { downloadFile } from "@/lib/client";
 import { useT } from "@/lib/i18n";
 import type { GuideDay, GuideItem, GuideItemKind, GuideLink, GuideStay, GuideWeather, TripGuide } from "@/lib/types";
 import { weatherCategory, weatherForDay, type DayWeather, type LiveDay, type LiveWeather } from "@/lib/weather";
+import { todayIn } from "@/lib/dates";
+import { telE164 } from "@/lib/phone";
+import LinkCheck from "./LinkCheck";
 import GuideEditor, { editGuide, isRedacted, itemList, type GuideTarget } from "./GuideEditor";
 import { Button, Card, cx, SectionTitle } from "./ui";
 
@@ -55,17 +58,10 @@ const KIND: Record<GuideItemKind, { icon: LucideIcon; cls: string }> = {
 
 const yen = (n: number) => `¥${n.toLocaleString("en-US")}`;
 const mapsUrl = (q: string) => `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`;
-const telUrl = (p: string) => `tel:${p.replace(/[^\d+]/g, "")}`;
+const telUrl = (p: string) => `tel:${telE164(p)}`;
 const deg = (n: number | null) => (n === null ? "–" : `${n}°`);
 
 /** Today's date (YYYY-MM-DD) in the trip's time zone. */
-function todayIn(tz?: string) {
-  try {
-    return new Intl.DateTimeFormat("en-CA", { timeZone: tz || "Asia/Tokyo", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
-  } catch {
-    return new Date().toISOString().slice(0, 10);
-  }
-}
 
 type Section = "days" | "stays" | "prep";
 
@@ -125,11 +121,13 @@ interface EditCtx {
 }
 
 export default function GuideTab({
+  tripId,
   guide,
   unlocked,
   canEdit,
   onSave,
 }: {
+  tripId: string;
   guide: TripGuide;
   unlocked: boolean;
   canEdit: boolean;
@@ -227,6 +225,7 @@ export default function GuideTab({
             >
               <Download className="h-3.5 w-3.5" /> {t("Download guide backup (.json)")}
             </Button>
+            <LinkCheck tripId={tripId} />
           </div>
         )}
         <div className="grid grid-cols-3 gap-1 p-1.5" role="tablist" aria-label={t("Trip guide")}>
@@ -552,7 +551,7 @@ function ItemRow({
             <Info className="mt-px h-3.5 w-3.5 shrink-0 text-ink-3" /> {n}
           </p>
         ))}
-        <Contact address={item.address} phone={item.phone} />
+        <Contact address={item.address} map={item.map} phone={item.phone} />
         {item.links && <Links links={item.links} />}
         <Private lines={item.private} has={item.hasPrivate} unlocked={unlocked} />
         {item.options && item.options.length > 0 && (
@@ -612,7 +611,7 @@ function StayCard({ stay, unlocked, fmt, controls }: { stay: GuideStay; unlocked
           <Info className="mt-px h-3.5 w-3.5 shrink-0 text-ink-3" /> {n}
         </p>
       ))}
-      <Contact address={stay.address} phone={stay.phone} />
+      <Contact address={stay.address} map={stay.map} phone={stay.phone} />
       {stay.links && <Links links={stay.links} />}
       <Private lines={stay.private} has={stay.hasPrivate} unlocked={unlocked} />
     </Card>
@@ -659,13 +658,19 @@ function WeatherTable({ weather, fmt, today }: { weather: GuideWeather; fmt: Fmt
   );
 }
 
-function Contact({ address, phone }: { address?: string; phone?: string }) {
-  if (!address && !phone) return null;
+function Contact({ address, map, phone }: { address?: string; map?: string; phone?: string }) {
+  const { t } = useT();
+  if (!address && !map && !phone) return null;
   return (
     <div className="space-y-1">
       {address && (
-        <a href={mapsUrl(address)} target="_blank" rel="noreferrer" className="flex items-start gap-1.5 text-xs text-indigo-700 underline-offset-2 hover:underline">
+        <a href={mapsUrl(map ? `${map} ${address}` : address)} target="_blank" rel="noreferrer" className="flex items-start gap-1.5 text-xs text-indigo-700 underline-offset-2 hover:underline">
           <MapPin className="mt-px h-3.5 w-3.5 shrink-0" /> {address}
+        </a>
+      )}
+      {!address && map && (
+        <a href={mapsUrl(map)} target="_blank" rel="noreferrer" className="flex items-start gap-1.5 text-xs text-indigo-700 underline-offset-2 hover:underline">
+          <MapPin className="mt-px h-3.5 w-3.5 shrink-0" /> {t("Google Maps: {place}", { place: map })}
         </a>
       )}
       {phone && (

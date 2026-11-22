@@ -1,22 +1,25 @@
 "use client";
-import { ArrowLeftRight, Download, FileSpreadsheet, Languages, Users } from "lucide-react";
+import { ArrowLeftRight, Download, FileSpreadsheet, Languages, Sheet, Users } from "lucide-react";
+import { useState } from "react";
 import { backupFilename, bundleToBackup } from "@/lib/backup";
 import { downloadFile } from "@/lib/client";
 import { buildTransactionsCsv } from "@/lib/exportCsv";
 import { useT } from "@/lib/i18n";
-import type { TripBundle } from "@/lib/types";
+import type { TripBundle, TripGuide } from "@/lib/types";
 import { useDisplay } from "./DisplayCurrency";
 import ImportBackup from "./ImportBackup";
 import { Button, cx, Modal, SectionTitle } from "./ui";
 
 export default function TripMenu({
   bundle,
+  guide,
   unlocked,
   onClose,
   onManage,
   onToast,
 }: {
   bundle: TripBundle;
+  guide?: TripGuide | null;
   unlocked: boolean;
   onClose: () => void;
   onManage: () => void;
@@ -28,6 +31,19 @@ export default function TripMenu({
   const exportJson = () => {
     downloadFile(backupFilename(bundle.trip.name, "json"), JSON.stringify(bundleToBackup(bundle), null, 2), "application/json");
     onToast(t("Backup downloaded"));
+  };
+  const [xlsxBusy, setXlsxBusy] = useState(false);
+  const exportXlsx = async () => {
+    setXlsxBusy(true);
+    try {
+      const { downloadTripWorkbook } = await import("@/lib/exportXlsx");
+      await downloadTripWorkbook({ bundle, guide, t }, backupFilename(bundle.trip.name, "xlsx"));
+      onToast(t("Excel file downloaded"));
+    } catch {
+      onToast(t("Couldn't create the Excel file"));
+    } finally {
+      setXlsxBusy(false);
+    }
   };
   const exportCsv = () => {
     downloadFile(backupFilename(bundle.trip.name, "csv"), buildTransactionsCsv(bundle, t), "text/csv;charset=utf-8");
@@ -78,11 +94,17 @@ export default function TripMenu({
         <Button variant="secondary" className="w-full justify-start" onClick={exportJson}>
           <Download className="h-4 w-4" /> {t("Download backup (.json)")}
         </Button>
+        <Button variant="secondary" className="w-full justify-start" onClick={exportXlsx} disabled={xlsxBusy}>
+          <Sheet className="h-4 w-4" /> {xlsxBusy ? t("Preparing…") : t("Download Excel with formulas (.xlsx)")}
+        </Button>
         <Button variant="secondary" className="w-full justify-start" onClick={exportCsv}>
           <FileSpreadsheet className="h-4 w-4" /> {t("Download spreadsheet (.csv)")}
         </Button>
         {unlocked && <ImportBackup className="w-full justify-start" onError={onToast} />}
       </div>
+      <p className="mt-2 px-1 text-xs text-ink-3">
+        {t("The Excel file keeps working offline: balances, family and per-person totals are live formulas, so you can add rows by hand.")}
+      </p>
       {unlocked && <p className="mt-2 px-1 text-xs text-ink-3">{t("Restoring creates a new copy of the trip; nothing is overwritten.")}</p>}
 
       {unlocked && (
