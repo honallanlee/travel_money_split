@@ -211,6 +211,9 @@ function EntityCard({
   // Only show the "From kitty" column when someone in this group has actually received kitty cash.
   const showReceived = members.some((m) => m.b.received > 0);
   const showSettled = members.some((m) => Math.abs(m.b.settled) > 0.004);
+  // Family card: its members. Single person: their family's name (in "By person" mode), else nothing.
+  const familyName = e.kind === "solo" ? bundle.mini_groups.find((g) => g.id === members[0]?.p.mini_group_id)?.name : undefined;
+  const subtitle = e.kind === "group" ? members.map((m) => m.p.name).join(", ") : familyName ?? "";
   const inside = e.kind === "group" ? splitWithinFamily(members.map((m) => ({ id: m.p.id, name: m.p.name, net: m.b.net }))) : [];
 
   return (
@@ -219,7 +222,7 @@ function EntityCard({
         <AvatarCluster people={members.map((m) => m.p)} />
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-semibold">{e.name}</p>
-          <p className="truncate text-xs text-ink-3">{e.kind === "group" ? members.map((m) => m.p.name).join(", ") : t("Solo traveller")}</p>
+          {subtitle && <p className="truncate text-xs text-ink-3">{subtitle}</p>}
         </div>
         <div className="text-right">
           <Money amount={e.net} signed className={cx("text-sm font-bold", square ? "text-ink-3" : e.net > 0 ? "text-pos" : "text-neg")} />
