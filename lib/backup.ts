@@ -25,8 +25,20 @@ export function bundleToBackup(b: TripBundle): TripBackup {
       splits: t.splits.map((s) => ({ participant_id: s.participant_id, share_amount_base: s.share_amount_base })),
     })),
     budget_items: b.budget_items.map((x) => ({ category: x.category, planned_amount_base: x.planned_amount_base, notes: x.notes })),
+    prepaid_items: (b.prepaid_items ?? []).map((x) => ({
+      title: x.title,
+      category: x.category,
+      currency: x.currency,
+      exchange_rate_to_base: x.exchange_rate_to_base,
+      // the linked expense is restored as a normal expense, so keep it from being counted twice
+      status: x.status,
+      date: x.date,
+      note: x.note,
+      shares: x.shares.map((s) => ({ participant_id: s.participant_id, amount: s.amount })),
+      sort: x.sort,
+    })),
   };
 }
 
-export const backupFilename = (tripName: string, ext: "json" | "csv") =>
+export const backupFilename = (tripName: string, ext: "json" | "csv" | "xlsx") =>
   `${tripName.replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-|-$/g, "").slice(0, 40) || "trip"}-${new Date().toISOString().slice(0, 10)}.${ext}`;

@@ -2,7 +2,18 @@ import "server-only";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { randomUUID } from "node:crypto";
 
-export type Table = "trips" | "mini_groups" | "participants" | "transactions" | "transaction_splits" | "budget_items" | "media" | "trip_guides";
+export type Table =
+  | "trips"
+  | "mini_groups"
+  | "participants"
+  | "transactions"
+  | "transaction_splits"
+  | "budget_items"
+  | "media"
+  | "trip_guides"
+  | "trip_guide_versions"
+  | "prepaid_items"
+  | "auth_attempts";
 type Row = Record<string, unknown> & { id: string };
 /** Equality filter; an array value means `IN (...)`. */
 export type Where = Record<string, string | string[]>;
@@ -73,6 +84,8 @@ const FKS: Record<Table, FkRule[]> = {
     { table: "budget_items", column: "trip_id", onDelete: "cascade" },
     { table: "media", column: "trip_id", onDelete: "cascade" },
     { table: "trip_guides", column: "trip_id", onDelete: "cascade" },
+    { table: "trip_guide_versions", column: "trip_id", onDelete: "cascade" },
+    { table: "prepaid_items", column: "trip_id", onDelete: "cascade" },
   ],
   mini_groups: [{ table: "participants", column: "mini_group_id", onDelete: "set null" }],
   participants: [
@@ -80,11 +93,17 @@ const FKS: Record<Table, FkRule[]> = {
     { table: "transaction_splits", column: "participant_id", onDelete: "cascade" },
     { table: "media", column: "participant_id", onDelete: "cascade" },
   ],
-  transactions: [{ table: "transaction_splits", column: "transaction_id", onDelete: "cascade" }],
+  transactions: [
+    { table: "transaction_splits", column: "transaction_id", onDelete: "cascade" },
+    { table: "prepaid_items", column: "transaction_id", onDelete: "set null" },
+  ],
   transaction_splits: [],
   budget_items: [],
   media: [{ table: "participants", column: "avatar_media_id", onDelete: "set null" }],
   trip_guides: [],
+  trip_guide_versions: [],
+  prepaid_items: [],
+  auth_attempts: [],
 };
 
 const DEFAULTS: Partial<Record<Table, () => Record<string, unknown>>> = {
@@ -101,6 +120,8 @@ const DEFAULTS: Partial<Record<Table, () => Record<string, unknown>>> = {
     created_at: new Date().toISOString(),
   }),
   budget_items: () => ({ notes: null }),
+  prepaid_items: () => ({ note: null, date: null, transaction_id: null, sort: 0, created_at: new Date().toISOString() }),
+  trip_guide_versions: () => ({ saved_at: new Date().toISOString() }),
 };
 
 type Tables = Record<Table, Row[]>;
@@ -118,6 +139,9 @@ class MemoryStore implements Store {
       budget_items: [],
       media: [],
       trip_guides: [],
+      trip_guide_versions: [],
+      prepaid_items: [],
+      auth_attempts: [],
     };
     // Tables added after the store was created (e.g. during hot reload) start empty.
     for (const t of Object.keys(FKS) as Table[]) g.__tms_memory[t] ??= [];

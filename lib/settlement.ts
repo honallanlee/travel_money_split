@@ -349,11 +349,16 @@ export interface Ledger {
  * kitty credits nobody, Σ(participant net) == cash pool balance. Any leftover cash is
  * modelled as a "Cash Kitty" party that owes it back (or is owed, if overdrawn), so the
  * settlement plan includes the Treasurer returning unspent cash.
+ * With `individual`, families are ignored and everyone settles on their own.
  */
-export function computeLedger(bundle: Pick<TripBundle, "participants" | "mini_groups" | "transactions">): Ledger {
+export function computeLedger(
+  bundle: Pick<TripBundle, "participants" | "mini_groups" | "transactions">,
+  opts: { individual?: boolean } = {},
+): Ledger {
   const pool = computeCashPool(bundle.transactions);
   const balances = computeParticipantBalances(bundle.participants, bundle.transactions);
-  const entities = rollupEntities(bundle.participants, bundle.mini_groups, balances);
+  // individual: every traveller settles on their own instead of as a family
+  const entities = rollupEntities(bundle.participants, opts.individual ? [] : bundle.mini_groups, balances);
   const treasurer = bundle.participants.find((p) => p.is_treasurer) ?? null;
 
   const parties = [...entities];

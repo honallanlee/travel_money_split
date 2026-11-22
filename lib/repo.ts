@@ -2,7 +2,7 @@ import "server-only";
 import { bundleToBackup } from "./backup";
 import { getStore } from "./db/store";
 import { allocateCents, currencyDecimals, fromCents, round2, roundTo, splitByLineItems, splitEqually, splitSharesBetweenParts, toCents } from "./settlement";
-import type { BudgetItem, GuideItem, GuideStay, MediaItem, MiniGroup, Participant, Split, Transaction, Trip, TripBackup, TripBundle, TripGuide } from "./types";
+import { PREPAID_STATUSES, type BudgetItem, type GuideItem, type GuideStay, type MediaItem, type MiniGroup, type Participant, type PrepaidItem, type PrepaidStatus, type Split, type Transaction, type Trip, type TripBackup, type TripBundle, type TripGuide } from "./types";
 import * as v from "./validation";
 import { ValidationError } from "./validation";
 
@@ -30,12 +30,13 @@ export async function getTrip(id: string): Promise<Trip> {
 
 export async function getTripBundle(id: string): Promise<TripBundle> {
   const trip = await getTrip(id);
-  const [mini_groups, participants, txRows, budgets, photos] = await Promise.all([
+  const [mini_groups, participants, txRows, budgets, photos, prepaid] = await Promise.all([
     db().select<MiniGroup>("mini_groups", { trip_id: id }),
     db().select<Participant>("participants", { trip_id: id }),
     db().select<Transaction>("transactions", { trip_id: id }),
     db().select<BudgetItem>("budget_items", { trip_id: id }),
     db().select<MediaItem>("media", { trip_id: id, kind: "photo" }, MEDIA_META),
+    listPrepaid(id),
   ]);
   const splits = await db().select<Split & { transaction_id: string }>("transaction_splits", {
     transaction_id: txRows.map((t) => t.id),
@@ -63,6 +64,7 @@ export async function getTripBundle(id: string): Promise<TripBundle> {
     transactions,
     budget_items: budgets.map((b) => ({ ...b, planned_amount_base: n(b.planned_amount_base) })),
     photos: photos.sort((a, b) => b.created_at.localeCompare(a.created_at)),
+    prepaid_items: prepaid,
   };
 }
 
@@ -597,6 +599,12 @@ export async function importTrip(body: unknown): Promise<Trip> {
       }
     }
     for (const b of src.budget_items) await createBudget({ trip_id: trip.id, ...b });
+    for (const x of src.prepaid_items ?? [])
+      await createPrepaid({
+        ...x,
+        trip_id: trip.id,
+        shares: (x.shares ?? []).map((s) => ({ participant_id: map(s.participant_id), amount: s.amount })).filter((s) => s.participant_id),
+      });
     return trip;
   } catch (e) {
     await deleteTrip(trip.id);
@@ -639,10 +647,94 @@ export async function saveTripGuide(tripId: string, body: unknown): Promise<void
   if (!Array.isArray(o.days) || !Array.isArray(o.stays) || !Array.isArray(o.notes))
     throw new ValidationError("Guide needs title, notes, days and stays");
   if (JSON.stringify(o).length > 500_000) throw new ValidationError("Guide is too large");
+  // Keep the previous version so an accidental overwrite can be undone.
+  const [prev] = await db().select<{ content: TripGuide }>("trip_guides", { trip_id: tripId }, "content");
+  if (prev) {
+    try {
+      await db().insert("trip_guide_versions", [{ trip_id: tripId, content: prev.content, saved_at: new Date().toISOString() }]);
+    } catch (e) {
+      console.warn("[guide] could not keep the previous version (run supabase/schema.sql):", (e as Error).message);
+    }
+  }
   await db().remove("trip_guides", { trip_id: tripId });
   await db().insert("trip_guides", [{ trip_id: tripId, content: o, updated_at: new Date().toISOString() }]);
 }
 
 export async function deleteTripGuide(tripId: string) {
   await db().remove("trip_guides", { trip_id: tripId });
+}
+
+// ---------------------------------------------------------------------------
+// Prepaid / planned costs (settled outside the app: hotels, flights…)
+// ---------------------------------------------------------------------------
+
+const missingTable = (e: unknown) => /schema cache|PGRST205|relation .* does not exist|prepaid_items/i.test((e as Error)?.message ?? "");
+
+function normalisePrepaid(r: PrepaidItem): PrepaidItem {
+  return {
+    ...r,
+    exchange_rate_to_base: n(r.exchange_rate_to_base) || 1,
+    sort: n(r.sort),
+    shares: (Array.isArray(r.shares) ? r.shares : []).map((s) => ({ participant_id: s.participant_id, amount: n(s.amount) })),
+  };
+}
+
+/** Never breaks the trip page: before the table exists (schema not yet re-run) it returns []. */
+export async function listPrepaid(tripId: string): Promise<PrepaidItem[]> {
+  try {
+    const rows = await db().select<PrepaidItem>("prepaid_items", { trip_id: tripId });
+    return rows.map(normalisePrepaid).sort((a, b) => a.sort - b.sort || (a.date ?? "").localeCompare(b.date ?? "") || a.title.localeCompare(b.title));
+  } catch (e) {
+    if (missingTable(e)) return [];
+    throw e;
+  }
+}
+
+function prepaidFields(o: Record<string, unknown>, partial: boolean) {
+  const patch: Record<string, unknown> = {};
+  const has = (k: string) => !partial || o[k] !== undefined;
+  if (has("title")) patch.title = v.str(o.title, "title", { max: 120 });
+  if (has("category")) patch.category = v.category(o.category ?? "Accommodation");
+  if (has("currency")) patch.currency = v.currency(o.currency ?? "JPY");
+  if (has("exchange_rate_to_base")) patch.exchange_rate_to_base = v.num(o.exchange_rate_to_base ?? 1, "exchange_rate_to_base", { positive: true, max: 1e6 });
+  if (has("status")) {
+    const st = (o.status ?? "paid") as PrepaidStatus;
+    if (!PREPAID_STATUSES.includes(st)) throw new ValidationError(`status must be one of ${PREPAID_STATUSES.join(", ")}`);
+    patch.status = st;
+  }
+  if (has("date")) {
+    const d = o.date ? v.str(o.date, "date", { max: 10 }) : null;
+    if (d && !/^\d{4}-\d{2}-\d{2}$/.test(d)) throw new ValidationError("date must be YYYY-MM-DD");
+    patch.date = d;
+  }
+  if (has("note")) patch.note = o.note ? v.str(o.note, "note", { max: 300 }) : null;
+  if (has("sort")) patch.sort = Math.trunc(v.num(o.sort ?? 0, "sort", { min: -1e6, max: 1e6 }));
+  if (has("transaction_id")) patch.transaction_id = v.uuidOrNull(o.transaction_id, "transaction_id");
+  if (has("shares")) {
+    if (!Array.isArray(o.shares)) throw new ValidationError("shares must be a list");
+    if (o.shares.length > 200) throw new ValidationError("Too many shares");
+    patch.shares = o.shares.map((raw, i) => {
+      const so = v.obj(raw);
+      return { participant_id: v.uuid(so.participant_id, `shares[${i}].participant_id`), amount: round2(v.num(so.amount, `shares[${i}].amount`, { min: 0, max: 1e9 })) };
+    });
+  }
+  return patch;
+}
+
+export async function createPrepaid(body: unknown): Promise<PrepaidItem> {
+  const o = v.obj(body);
+  const trip_id = v.uuid(o.trip_id, "trip_id");
+  await getTrip(trip_id);
+  const [row] = await db().insert<PrepaidItem>("prepaid_items", [{ trip_id, ...prepaidFields(o, false) }]);
+  return normalisePrepaid(row);
+}
+
+export async function updatePrepaid(id: string, body: unknown): Promise<PrepaidItem> {
+  const row = await db().update<PrepaidItem>("prepaid_items", id, prepaidFields(v.obj(body), true));
+  if (!row) throw new NotFoundError("Cost not found");
+  return normalisePrepaid(row);
+}
+
+export async function deletePrepaid(id: string) {
+  await db().remove("prepaid_items", { id });
 }

@@ -281,7 +281,7 @@ function ItemForm({ initial, busy, onSubmit }: { initial: GuideItem; busy: boole
         </Field>
       </div>
       <Text label={t("Title")} value={f.title} onChange={set("title")} />
-      <Text label={t("Who (optional)")} value={f.who} onChange={set("who")} placeholder="Allan + Deborah" />
+      <Text label={t("Who (optional)")} value={f.who} onChange={set("who")} placeholder="Alex + Sam" />
       <Area label={t("Details")} value={f.detail} onChange={set("detail")} rows={2} />
       <div className="grid grid-cols-2 gap-2">
         <Text label={t("Duration")} value={f.duration} onChange={set("duration")} placeholder="40 min" />

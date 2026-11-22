@@ -16,6 +16,9 @@ import { categoryTotals, dailySeries, keyMetrics } from "@/lib/analytics";
 import type { TripBundle } from "@/lib/types";
 import { useT } from "@/lib/i18n";
 import { useDisplay } from "./DisplayCurrency";
+import type { TxPrefill } from "./TransactionModal";
+import type { RunMutation } from "./TripApp";
+import TripTotals from "./TripTotals";
 import { Card, CategoryIcon, cx, SectionTitle } from "./ui";
 
 const AXIS = { fontSize: 11, fill: "var(--ink-3)" };
@@ -36,7 +39,28 @@ function ChartTip({ active, payload, label, fmt, labelFmt }: TooltipProps<number
   );
 }
 
-export default function AnalyticsTab({ bundle }: { bundle: TripBundle }) {
+export default function AnalyticsTab({
+  bundle,
+  unlocked,
+  run,
+  onRecordPayment,
+}: {
+  bundle: TripBundle;
+  unlocked: boolean;
+  run: RunMutation;
+  onRecordPayment: (prefill: TxPrefill) => void;
+}) {
+  const { t } = useT();
+  return (
+    <div>
+      <TripTotals bundle={bundle} unlocked={unlocked} run={run} onRecordPayment={onRecordPayment} />
+      <SectionTitle>{t("Spending logged in the app")}</SectionTitle>
+      <SpendCharts bundle={bundle} />
+    </div>
+  );
+}
+
+function SpendCharts({ bundle }: { bundle: TripBundle }) {
   const d = useDisplay();
   const { t, locale } = useT();
   const shortDay = shortDayIn(locale);

@@ -38,6 +38,9 @@ import { downloadFile } from "@/lib/client";
 import { useT } from "@/lib/i18n";
 import type { GuideDay, GuideItem, GuideItemKind, GuideLink, GuideStay, GuideWeather, TripGuide } from "@/lib/types";
 import { weatherCategory, weatherForDay, type DayWeather, type LiveDay, type LiveWeather } from "@/lib/weather";
+import { todayIn } from "@/lib/dates";
+import { telE164 } from "@/lib/phone";
+import LinkCheck from "./LinkCheck";
 import GuideEditor, { editGuide, isRedacted, itemList, type GuideTarget } from "./GuideEditor";
 import { Button, Card, cx, SectionTitle } from "./ui";
 
@@ -55,17 +58,10 @@ const KIND: Record<GuideItemKind, { icon: LucideIcon; cls: string }> = {
 
 const yen = (n: number) => `¥${n.toLocaleString("en-US")}`;
 const mapsUrl = (q: string) => `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`;
-const telUrl = (p: string) => `tel:${p.replace(/[^\d+]/g, "")}`;
+const telUrl = (p: string) => `tel:${telE164(p)}`;
 const deg = (n: number | null) => (n === null ? "–" : `${n}°`);
 
 /** Today's date (YYYY-MM-DD) in the trip's time zone. */
-function todayIn(tz?: string) {
-  try {
-    return new Intl.DateTimeFormat("en-CA", { timeZone: tz || "Asia/Tokyo", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
-  } catch {
-    return new Date().toISOString().slice(0, 10);
-  }
-}
 
 type Section = "days" | "stays" | "prep";
 
@@ -125,11 +121,13 @@ interface EditCtx {
 }
 
 export default function GuideTab({
+  tripId,
   guide,
   unlocked,
   canEdit,
   onSave,
 }: {
+  tripId: string;
   guide: TripGuide;
   unlocked: boolean;
   canEdit: boolean;
@@ -227,6 +225,7 @@ export default function GuideTab({
             >
               <Download className="h-3.5 w-3.5" /> {t("Download guide backup (.json)")}
             </Button>
+            <LinkCheck tripId={tripId} />
           </div>
         )}
         <div className="grid grid-cols-3 gap-1 p-1.5" role="tablist" aria-label={t("Trip guide")}>

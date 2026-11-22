@@ -3,6 +3,7 @@ import { Analytics } from "@vercel/analytics/next";
 import { SpeedInsights } from "@vercel/speed-insights/next";
 import "./globals.css";
 import { LanguageProvider } from "@/lib/i18n";
+import ServiceWorker from "@/components/ServiceWorker";
 
 const SHORT = "Your group trip, all in one place · 團體旅程，一站掌握";
 
@@ -36,6 +37,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <LanguageProvider>{children}</LanguageProvider>
         <Analytics />
         <SpeedInsights />
+        <ServiceWorker />
       </body>
     </html>
   );

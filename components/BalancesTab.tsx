@@ -1,7 +1,7 @@
 "use client";
 import { ArrowRight, Check, ChevronDown, Copy, Share2, Wallet } from "lucide-react";
-import { useState } from "react";
-import { formatWhatsAppSummary, KITTY_ID, type Ledger, type SettlementEntity } from "@/lib/settlement";
+import { useEffect, useMemo, useState } from "react";
+import { computeLedger, formatWhatsAppSummary, KITTY_ID, type Ledger, type SettlementEntity } from "@/lib/settlement";
 import type { TripBundle } from "@/lib/types";
 import { useT } from "@/lib/i18n";
 import { useDisplay } from "./DisplayCurrency";
@@ -11,9 +11,12 @@ import { Avatar, Button, Card, cx, Money, SectionTitle } from "./ui";
 /** Opens the transaction form pre-filled to record one line of the settlement plan. */
 export type RecordSettlement = (type: "CASH_PAYOUT" | "CASH_DEPOSIT" | "TRANSFER", prefill: TxPrefill) => void;
 
+type SettleMode = "family" | "person";
+const MODE_KEY = "tms:settle-mode";
+
 export default function BalancesTab({
   bundle,
-  ledger,
+  ledger: familyLedger,
   onCopied,
   unlocked,
   onRecord,
@@ -26,6 +29,23 @@ export default function BalancesTab({
 }) {
   const cur = bundle.trip.base_currency;
   const [copied, setCopied] = useState(false);
+  const hasFamilies = familyLedger.entities.some((e) => e.kind === "group");
+  const [mode, setModeState] = useState<SettleMode>("family");
+  useEffect(() => {
+    try {
+      if (localStorage.getItem(MODE_KEY) === "person") setModeState("person");
+    } catch {}
+  }, []);
+  const setMode = (m: SettleMode) => {
+    setModeState(m);
+    try {
+      localStorage.setItem(MODE_KEY, m);
+    } catch {}
+  };
+  const personLedger = useMemo(() => computeLedger(bundle, { individual: true }), [bundle]);
+  const byPerson = mode === "person" || !hasFamilies;
+  const ledger = byPerson ? personLedger : familyLedger;
+  const nameOf = (id: string) => bundle.participants.find((p) => p.id === id)?.name ?? "";
   const d = useDisplay();
   const { t } = useT();
   const kittyName = ledger.treasurerName ? t("Cash Kitty ({name})", { name: ledger.treasurerName }) : t("Cash Kitty");
@@ -76,10 +96,37 @@ export default function BalancesTab({
   };
 
   const sorted = [...ledger.entities].sort((a, b) => b.net - a.net);
+  /** For a family line in the plan: how much of it belongs to each member. */
+  const memberParts = (entityId: string) => {
+    const ent = ledger.entities.find((e) => e.id === entityId);
+    if (!ent || ent.kind !== "group") return null;
+    const parts = ent.member_ids.map((id) => ({ id, net: ledger.balances[id]?.net ?? 0 })).filter((m) => Math.abs(m.net) >= 0.005);
+    return parts.length ? parts : null;
+  };
 
   return (
     <div>
-      <SectionTitle>{t("Families & travellers")}</SectionTitle>
+      {hasFamilies && (
+        <div className="mb-1 grid grid-cols-2 gap-1 rounded-xl bg-stone-200/70 p-1" role="radiogroup" aria-label={t("Settle up by")}>
+          {(
+            [
+              ["family", t("By family")],
+              ["person", t("By person")],
+            ] as const
+          ).map(([m, label]) => (
+            <button
+              key={m}
+              role="radio"
+              aria-checked={mode === m}
+              onClick={() => setMode(m)}
+              className={cx("rounded-lg py-2 text-sm font-semibold", mode === m ? "bg-surface shadow-sm" : "text-ink-2")}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+      <SectionTitle>{byPerson ? t("Travellers") : t("Families & travellers")}</SectionTitle>
       {sorted.length === 0 && <Card className="p-6 text-center text-sm text-ink-2">{t("No travellers yet.")}</Card>}
       <div className="space-y-2">
         {sorted.map((e) => (
@@ -117,6 +164,21 @@ export default function BalancesTab({
                   <span className="font-semibold">{partyName(x.from_id, x.from_name)}</span>
                   <ArrowRight className="mx-1 inline h-3.5 w-3.5 text-ink-3" />
                   <span className="font-semibold">{partyName(x.to_id, x.to_name)}</span>
+                  {[x.from_id, x.to_id].map((id) => {
+                    const parts = memberParts(id);
+                    if (!parts) return null;
+                    return (
+                      <span key={id} className="mt-0.5 block text-[11px] not-italic text-ink-3">
+                        {t("{family}:", { family: partyName(id, id === x.from_id ? x.from_name : x.to_name) })}{" "}
+                        {parts.map((m, k) => (
+                          <span key={m.id}>
+                            {k > 0 && " · "}
+                            {nameOf(m.id)} <span className={m.net < 0 ? "text-neg" : "text-pos"}>{m.net < 0 ? t("owes") : t("is owed")} {d.fmt(Math.abs(m.net))}</span>
+                          </span>
+                        ))}
+                      </span>
+                    );
+                  })}
                 </span>
                 <Money amount={x.amount} className="font-bold" />
                 {unlocked && (
@@ -149,7 +211,9 @@ export default function BalancesTab({
         </div>
       </Card>
       <p className="mt-2 px-1 text-xs text-ink-3">
-        {t("Payments are minimised by pairing the biggest debtor with the biggest creditor. Family members are settled as one unit.")}
+        {byPerson
+          ? t("Payments are minimised by pairing the biggest debtor with the biggest creditor. Everyone settles on their own.")
+          : t("Payments are minimised by pairing the biggest debtor with the biggest creditor. Family members are settled as one unit; the grey lines show each member's part.")}
       </p>
     </div>
   );

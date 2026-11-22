@@ -29,6 +29,7 @@ import { useT } from "@/lib/i18n";
 import { computeLedger } from "@/lib/settlement";
 import type { Transaction, TripBundle, TripGuide, TxType } from "@/lib/types";
 import AnalyticsTab from "./AnalyticsTab";
+import { cacheThisPage } from "./ServiceWorker";
 import BalancesTab from "./BalancesTab";
 import { DisplayCurrencyChip, DisplayCurrencyProvider, useDisplay } from "./DisplayCurrency";
 import FeedTab from "./FeedTab";
@@ -107,6 +108,7 @@ export default function TripApp({ tripId }: { tripId: string }) {
       setBundle(fresh);
       setOffline(null);
       setLoadErr(null);
+      cacheThisPage();
       try {
         localStorage.setItem(cacheKey(tripId), JSON.stringify({ savedAt: new Date().toISOString(), bundle: fresh }));
       } catch {}
@@ -263,10 +265,13 @@ export default function TripApp({ tripId }: { tripId: string }) {
             />
           )}
           {tab === "photos" && <PhotosTab bundle={bundle} unlocked={canEdit} offline={!!offline} run={run} />}
-          {tab === "analytics" && <AnalyticsTab bundle={bundle} />}
+          {tab === "analytics" && (
+            <AnalyticsTab bundle={bundle} unlocked={canEdit} run={run} onRecordPayment={(prefill) => openNew("CASH_EXPENSE", undefined, prefill)} />
+          )}
           {tab === "planner" && <PlannerTab bundle={bundle} unlocked={canEdit} run={run} />}
           {tab === "guide" && guide && (
             <GuideTab
+              tripId={tripId}
               guide={guide}
               unlocked={tr.unlocked}
               canEdit={canEdit}
@@ -342,6 +347,7 @@ export default function TripApp({ tripId }: { tripId: string }) {
         {showMenu && (
           <TripMenu
             bundle={bundle}
+            guide={guide}
             unlocked={canEdit}
             onClose={() => setShowMenu(false)}
             onManage={() => {
@@ -359,6 +365,7 @@ export default function TripApp({ tripId }: { tripId: string }) {
             bundle={bundle}
             run={run}
             onClose={() => setTxModal(null)}
+            timezone={guide?.timezone}
           />
         )}
         <Toast message={toast} onDone={() => setToast(null)} />
