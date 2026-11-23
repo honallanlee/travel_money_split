@@ -57,7 +57,7 @@ export interface Participant {
 export interface MediaItem {
   id: string;
   trip_id: string;
-  kind: "avatar" | "photo";
+  kind: "avatar" | "photo" | "receipt";
   participant_id: string | null;
   width: number | null;
   height: number | null;

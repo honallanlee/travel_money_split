@@ -73,6 +73,10 @@ CREATE TABLE IF NOT EXISTS media (
 
 ALTER TABLE participants ADD COLUMN IF NOT EXISTS avatar_media_id UUID REFERENCES media(id) ON DELETE SET NULL;
 
+-- Receipts (linked to expenses through transactions.receipt_url) are stored like trip photos.
+ALTER TABLE media DROP CONSTRAINT IF EXISTS media_kind_check;
+ALTER TABLE media ADD CONSTRAINT media_kind_check CHECK (kind IN ('avatar', 'photo', 'receipt'));
+
 -- Trip photos live in Supabase Storage (private bucket "trip-photos", 1 GB on Free); the media row
 -- keeps only the file paths. Avatars stay in the database (data column).
 ALTER TABLE media ADD COLUMN IF NOT EXISTS storage_path TEXT;
@@ -150,6 +154,7 @@ CREATE INDEX IF NOT EXISTS splits_tx_idx ON transaction_splits(transaction_id);
 CREATE INDEX IF NOT EXISTS budget_items_trip_idx ON budget_items(trip_id);
 CREATE INDEX IF NOT EXISTS media_trip_idx ON media(trip_id, kind, created_at DESC);
 CREATE INDEX IF NOT EXISTS prepaid_items_trip_idx ON prepaid_items(trip_id);
+CREATE INDEX IF NOT EXISTS transactions_receipt_idx ON transactions(receipt_url) WHERE receipt_url IS NOT NULL;
 CREATE INDEX IF NOT EXISTS trip_guide_versions_trip_idx ON trip_guide_versions(trip_id, saved_at DESC);
 
 -- Row Level Security: all reads and writes go through the Next.js API using the

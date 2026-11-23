@@ -1,7 +1,7 @@
 "use client";
-import { AlertTriangle, Camera, Loader2, Plus, ScanLine, Trash2, X } from "lucide-react";
+import { AlertTriangle, Camera, ImageUp, Loader2, Plus, Receipt, Sparkles, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, ApiError, compressImage } from "@/lib/client";
+import { api, ApiError, compressImage, prepareImage } from "@/lib/client";
 import { computeLedger, currencyDecimals, formatMoney, round2, roundTo, splitByLineItems, splitByWeights, splitEqually, toCents } from "@/lib/settlement";
 import { CATEGORIES, CURRENCIES, type OcrResult, type Split, type Transaction, type TripBundle, type TxType } from "@/lib/types";
 import { todayIn } from "@/lib/dates";
@@ -121,6 +121,10 @@ export default function TransactionModal({
   const [scanning, setScanning] = useState(false);
   const [scanMsg, setScanMsg] = useState<string | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
+  // Receipt photo: a new file waiting to be uploaded on save, or the one already linked.
+  const [receiptFile, setReceiptFile] = useState<File | null>(null);
+  const [receiptUrl, setReceiptUrl] = useState<string | null>(state.mode === "edit" ? state.tx.receipt_url : null);
+  const [scannedFile, setScannedFile] = useState<File | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const scannedOnce = useRef(false);
@@ -164,6 +168,8 @@ export default function TransactionModal({
     async (file: File) => {
       setScanning(true);
       setScanMsg(null);
+      setScannedFile(file);
+      setReceiptFile(file);
       setPreview((old) => {
         if (old) URL.revokeObjectURL(old);
         return URL.createObjectURL(file);
@@ -208,6 +214,54 @@ export default function TransactionModal({
     }
   }, [state, scan]);
   useEffect(() => () => void (preview && URL.revokeObjectURL(preview)), [preview]);
+
+  /** Attach a receipt photo without reading it (it is uploaded when the entry is saved). */
+  const attachReceipt = (file: File) => {
+    setReceiptFile(file);
+    setScanMsg(null);
+    setPreview((old) => {
+      if (old) URL.revokeObjectURL(old);
+      return URL.createObjectURL(file);
+    });
+  };
+  const removeReceipt = () => {
+    setReceiptFile(null);
+    setReceiptUrl(null);
+    setScannedFile(null);
+    setScanMsg(null);
+    setPreview((old) => {
+      if (old) URL.revokeObjectURL(old);
+      return null;
+    });
+  };
+  const receiptShown = preview ?? (receiptUrl ? `${receiptUrl}?size=thumb` : null);
+
+  /** Uploads a newly attached receipt, runs `send` with its link, and removes the upload again if saving fails. */
+  const withReceipt = async <R,>(send: (url: string | null) => Promise<R>): Promise<R> => {
+    let uploaded: string | null = null;
+    if (receiptFile && !isTransfer) {
+      const full = await prepareImage(receiptFile, 1800, 0.85);
+      const thumb = await prepareImage(receiptFile, 480, 0.75);
+      const fd = new FormData();
+      fd.append("file", full.blob, "receipt.jpg");
+      fd.append("thumb", thumb.blob, "thumb.jpg");
+      fd.append("width", String(full.width));
+      fd.append("height", String(full.height));
+      fd.append("trip_id", bundle.trip.id);
+      fd.append("kind", "receipt");
+      fd.append("caption", title.trim().slice(0, 200));
+      const res = await fetch("/api/media", { method: "POST", body: fd, credentials: "same-origin" });
+      const data = (await res.json().catch(() => ({}))) as { id?: string; error?: string };
+      if (!res.ok || !data.id) throw new ApiError(data.error ?? "Receipt upload failed", res.status);
+      uploaded = `/api/media/${data.id}`;
+    }
+    try {
+      return await send(isTransfer ? null : uploaded ?? receiptUrl);
+    } catch (e) {
+      if (uploaded) await api(`${uploaded}`, "DELETE").catch(() => {});
+      throw e;
+    }
+  };
 
   // ---- split preview ------------------------------------------------------
   const splitResult = useMemo((): { splits: Split[]; problem: string | null; note?: string } => {
@@ -306,13 +360,14 @@ export default function TransactionModal({
     const ok = isSpend && splitPay && state.mode === "new"
       ? await run(
           () =>
-            api("/api/transactions/split-payment", "POST", {
+            withReceipt((receipt_url) => api("/api/transactions/split-payment", "POST", {
               ...payload,
+              receipt_url,
               card_amount_local: Number(cardPart),
               card_paid_by_participant_id: cardPayer,
               title_kitty: `${payload.title} (${t("kitty part")})`,
               title_card: `${payload.title} (${t("card part")})`,
-            }),
+            })),
           "Split payment logged",
         )
       : groupDeposit
@@ -331,13 +386,15 @@ export default function TransactionModal({
         )
       : await run(
           () =>
-            state.mode === "edit"
-              ? api(`/api/transactions/${state.tx.id}`, "PUT", payload)
-              : api<{ id: string }>("/api/transactions", "POST", payload).then(async (created) => {
-                  const link = state.prefill?.prepaidId;
-                  if (link) await api(`/api/prepaid/${link}`, "PUT", { status: "recorded", transaction_id: created.id });
-                  return created;
-                }),
+            withReceipt((receipt_url) =>
+              state.mode === "edit"
+                ? api(`/api/transactions/${state.tx.id}`, "PUT", { ...payload, receipt_url })
+                : api<{ id: string }>("/api/transactions", "POST", { ...payload, receipt_url }).then(async (created) => {
+                    const link = state.prefill?.prepaidId;
+                    if (link) await api(`/api/prepaid/${link}`, "PUT", { status: "recorded", transaction_id: created.id });
+                    return created;
+                  }),
+            ),
           state.mode === "edit"
             ? "Saved"
             : isDeposit
@@ -414,37 +471,80 @@ export default function TransactionModal({
         </div>
         <p className="-mt-2 text-xs text-ink-3">{t(TYPE_OPTIONS.find((o) => o.type === type)!.hint)}</p>
 
-        {/* Receipt scan */}
+        {/* Receipt: take or upload a photo; it is saved with the entry. AI reading is optional. */}
         {!isTransfer && (
           <div className="rounded-2xl bg-surface p-3 ring-1 ring-line">
             <div className="flex items-center gap-3">
-              {preview ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={preview} alt="Receipt" className="h-14 w-14 rounded-lg object-cover ring-1 ring-line" />
+              {receiptShown ? (
+                <a href={preview ?? receiptUrl ?? "#"} target="_blank" rel="noreferrer" className="shrink-0" aria-label={t("View receipt")}>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={receiptShown} alt={t("Receipt")} className="h-14 w-14 rounded-lg object-cover ring-1 ring-line" />
+                </a>
               ) : (
-                <div className="grid h-14 w-14 place-items-center rounded-lg bg-stone-100 text-ink-3">
-                  <ScanLine className="h-6 w-6" />
+                <div className="grid h-14 w-14 shrink-0 place-items-center rounded-lg bg-stone-100 text-ink-3">
+                  <Receipt className="h-6 w-6" />
                 </div>
               )}
-              <div className="flex-1 text-sm">
-                <p className="font-semibold">{scanning ? t("Reading receipt…") : t("Scan a receipt")}</p>
-                <p className="text-xs text-ink-3">{t("AI fills in merchant, total and line items.")}</p>
+              <div className="min-w-0 flex-1 text-sm">
+                <p className="font-semibold">
+                  {scanning ? t("Reading receipt…") : receiptShown ? t("Receipt attached") : t("Receipt (optional)")}
+                </p>
+                <p className="text-xs text-ink-3">
+                  {receiptShown ? t("Saved with this entry. Tap the picture to see it.") : t("Take a photo or upload one; it's kept with the entry.")}
+                </p>
               </div>
-              <label className={cx("cursor-pointer rounded-xl bg-teal-50 p-2.5 text-brand", scanning && "pointer-events-none opacity-50")}>
-                {scanning ? <Loader2 className="h-5 w-5 animate-spin" /> : <Camera className="h-5 w-5" />}
-                <span className="sr-only">{t("Choose receipt photo")}</span>
+            </div>
+            <div className="mt-2.5 grid grid-cols-2 gap-2">
+              <label className={cx("flex cursor-pointer items-center justify-center gap-1.5 rounded-xl bg-teal-50 py-2 text-xs font-semibold text-brand", scanning && "pointer-events-none opacity-50")}>
+                <Camera className="h-4 w-4" /> {receiptShown ? t("Retake") : t("Take photo")}
                 <input
                   type="file"
-                  accept="image/jpeg,image/png,image/webp,image/*"
+                  accept="image/*"
                   capture="environment"
                   className="sr-only"
                   onChange={(e) => {
                     const f = e.target.files?.[0];
                     e.target.value = "";
-                    if (f) scan(f);
+                    if (f) attachReceipt(f);
                   }}
                 />
               </label>
+              <label className={cx("flex cursor-pointer items-center justify-center gap-1.5 rounded-xl bg-stone-100 py-2 text-xs font-semibold text-ink-2", scanning && "pointer-events-none opacity-50")}>
+                <ImageUp className="h-4 w-4" /> {t("Upload")}
+                <input
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp,image/heic,image/*"
+                  className="sr-only"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    e.target.value = "";
+                    if (f) attachReceipt(f);
+                  }}
+                />
+              </label>
+              {receiptFile && receiptFile !== scannedFile && (
+                <button
+                  type="button"
+                  disabled={scanning}
+                  onClick={() => scan(receiptFile)}
+                  className="flex items-center justify-center gap-1.5 rounded-xl bg-violet-50 py-2 text-xs font-semibold text-violet-800 disabled:opacity-50"
+                >
+                  {scanning ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />} {t("Fill in from receipt")}
+                </button>
+              )}
+              {receiptShown && (
+                <button
+                  type="button"
+                  disabled={scanning}
+                  onClick={removeReceipt}
+                  className={cx(
+                    "flex items-center justify-center gap-1.5 rounded-xl py-2 text-xs font-semibold text-neg ring-1 ring-red-200 disabled:opacity-50",
+                    !(receiptFile && receiptFile !== scannedFile) && "col-span-2",
+                  )}
+                >
+                  <Trash2 className="h-4 w-4" /> {t("Remove receipt")}
+                </button>
+              )}
             </div>
             {scanMsg && <p className="mt-2 text-xs text-ink-2">{scanMsg}</p>}
           </div>

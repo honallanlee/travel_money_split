@@ -36,7 +36,7 @@ export default function StorageBar({ refreshKey }: { refreshKey?: number }) {
       <div>
         <div className="mb-1 flex items-center justify-between">
           <span className="flex items-center gap-1.5 font-semibold text-ink-2">
-            <HardDrive className="h-3.5 w-3.5" /> {t("Photo storage")}
+            <HardDrive className="h-3.5 w-3.5" /> {t("Photos & receipts storage")}
           </span>
           <span className="tabular text-ink-2">
             {t("{used} of {limit}", { used: fmtBytes(u.photos.used), limit: fmtBytes(u.photos.limit) })}
@@ -46,7 +46,7 @@ export default function StorageBar({ refreshKey }: { refreshKey?: number }) {
         <p className="mt-1 text-ink-3">
           {pr >= 0.95
             ? t("Storage is full — delete some photos to add more.")
-            : t(u.photos.count === 1 ? "{n} photo · about {left} more fit" : "{n} photos · about {left} more fit", { n: u.photos.count, left: Math.max(0, Math.floor((u.photos.limit * 0.95 - u.photos.used) / 450_000)) })}
+            : t(u.photos.count === 1 ? "{n} file · room for about {left} more photos" : "{n} files · room for about {left} more photos", { n: u.photos.count, left: Math.max(0, Math.floor((u.photos.limit * 0.95 - u.photos.used) / 450_000)) })}
         </p>
       </div>
       {dr !== null && (
