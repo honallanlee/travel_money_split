@@ -88,7 +88,7 @@ export async function updateTrip(id: string, body: unknown): Promise<Trip> {
 }
 
 export async function deleteTrip(id: string) {
-  const photos = await db().select<MediaRow>("media", { trip_id: id, kind: "photo" }, "id,storage_path,thumb_path");
+  const photos = await db().select<MediaRow>("media", { trip_id: id, kind: ["photo", "receipt"] }, "id,storage_path,thumb_path");
   await db().remove("trips", { id });
   await removeObjectsQuietly(objectPaths(photos));
 }
@@ -248,12 +248,31 @@ async function parseTransaction(body: unknown, tripIdOverride?: string) {
       exchange_rate_to_base,
       amount_base,
       paid_by_participant_id: paid_by,
-      receipt_url: v.str(o.receipt_url, "receipt_url", { optional: true, max: 2000 }) || null,
+      receipt_url: receiptUrl(o.receipt_url),
       line_items: items,
       occurred_at: v.isoDate(o.occurred_at, "occurred_at"),
     },
     splits,
   };
+}
+
+/** Receipts are uploaded first (POST /api/media, kind "receipt") and linked as /api/media/<id>. */
+function receiptUrl(x: unknown): string | null {
+  const s = v.str(x, "receipt_url", { optional: true, max: 200 });
+  if (!s) return null;
+  if (!RECEIPT_URL.test(s)) throw new ValidationError("receipt_url must be a receipt uploaded to this app");
+  return s;
+}
+const RECEIPT_URL = /^\/api\/media\/([0-9a-f-]{36})$/i;
+
+/** Delete a receipt file once no transaction links to it any more (a split payment shares one). */
+async function dropReceiptIfUnused(url: string | null | undefined) {
+  const id = url ? RECEIPT_URL.exec(url)?.[1] : null;
+  if (!id) return;
+  const still = await db().select<{ id: string }>("transactions", { receipt_url: url! }, "id");
+  if (still.length) return;
+  const [m] = await db().select<{ kind: string }>("media", { id }, "kind");
+  if (m?.kind === "receipt") await deleteMedia(id);
 }
 
 export async function createTransaction(body: unknown): Promise<Transaction> {
@@ -339,11 +358,14 @@ export async function updateTransaction(id: string, body: unknown): Promise<Tran
   const tx = await db().update<Transaction>("transactions", id, row);
   await db().remove("transaction_splits", { transaction_id: id });
   await db().insert("transaction_splits", splits.map((s) => ({ ...s, transaction_id: id })));
+  if (existing.receipt_url && existing.receipt_url !== row.receipt_url) await dropReceiptIfUnused(existing.receipt_url);
   return { ...tx!, splits };
 }
 
 export async function deleteTransaction(id: string) {
+  const [existing] = await db().select<Transaction>("transactions", { id }, "id,receipt_url");
   await db().remove("transactions", { id });
+  await dropReceiptIfUnused(existing?.receipt_url);
 }
 
 // ---------------------------------------------------------------------------
@@ -491,6 +513,7 @@ async function seedDemoTrip(trip: Trip): Promise<void> {
 const MEDIA_META = "id,trip_id,kind,participant_id,width,height,caption,uploaded_by,created_at";
 export const MAX_MEDIA_BYTES = 1_500_000; // after client-side compression
 const MAX_PHOTOS_PER_TRIP = 500;
+const MAX_RECEIPTS_PER_TRIP = 1000;
 /** Supabase Free includes 1 GB of file storage for the whole project. */
 export const PHOTO_STORAGE_LIMIT = 1_000_000_000;
 /** Uploads stop a little before the limit so the project never goes over. */
@@ -504,9 +527,9 @@ const extFor = (mime: string) => (mime === "image/png" ? "png" : mime === "image
 
 type MediaRow = { id: string; trip_id: string; kind: string; byte_size: number | null; storage_path: string | null; thumb_path: string | null };
 
-/** Bytes used by trip photos in Supabase Storage (all trips: the 1 GB is shared by the project). */
+/** Bytes used by photos and receipts in Supabase Storage (all trips: the 1 GB is shared by the project). */
 async function photoBytes(): Promise<{ used: number; count: number }> {
-  const rows = await db().select<MediaRow>("media", { kind: "photo" }, "id,byte_size,storage_path");
+  const rows = await db().select<MediaRow>("media", { kind: ["photo", "receipt"] }, "id,byte_size,storage_path");
   const inStorage = rows.filter((r) => r.storage_path);
   return { used: inStorage.reduce((a, r) => a + n(r.byte_size), 0), count: inStorage.length };
 }
@@ -518,7 +541,7 @@ export async function storageUsage(): Promise<StorageUsage> {
 
 export async function uploadMedia(input: {
   trip_id: string;
-  kind: "avatar" | "photo";
+  kind: "avatar" | "photo" | "receipt";
   participant_id: string | null;
   mime: string;
   data: Buffer;
@@ -557,17 +580,19 @@ export async function uploadMedia(input: {
     return item;
   }
 
-  // Trip photo → Supabase Storage (private bucket); only a small row goes in the database.
-  const existing = await db().select<{ id: string }>("media", { trip_id: input.trip_id, kind: "photo" }, "id");
-  if (existing.length >= MAX_PHOTOS_PER_TRIP) throw new ValidationError("This trip has reached its photo limit");
+  // Trip photo or receipt → Supabase Storage (private bucket); only a small row goes in the database.
+  const existing = await db().select<{ id: string }>("media", { trip_id: input.trip_id, kind: input.kind }, "id");
+  if (input.kind === "photo" && existing.length >= MAX_PHOTOS_PER_TRIP) throw new ValidationError("This trip has reached its photo limit");
+  if (input.kind === "receipt" && existing.length >= MAX_RECEIPTS_PER_TRIP) throw new ValidationError("This trip has reached its receipt limit");
   const thumb = input.thumb && input.thumb.length <= 300_000 ? input.thumb : null;
   const bytes = input.data.length + (thumb?.length ?? 0);
   const { used } = await photoBytes();
   if (used + bytes > PHOTO_STORAGE_STOP) throw new ValidationError("Photo storage is full");
 
   const id = randomUUID();
-  const storage_path = `${input.trip_id}/${id}.${extFor(input.mime)}`;
-  const thumb_path = thumb ? `${input.trip_id}/${id}_thumb.jpg` : null;
+  const folder = input.kind === "receipt" ? `${input.trip_id}/receipts` : input.trip_id;
+  const storage_path = `${folder}/${id}.${extFor(input.mime)}`;
+  const thumb_path = thumb ? `${folder}/${id}_thumb.jpg` : null;
   await db().putObject(storage_path, input.data, input.mime);
   try {
     if (thumb && thumb_path) await db().putObject(thumb_path, thumb, "image/jpeg");

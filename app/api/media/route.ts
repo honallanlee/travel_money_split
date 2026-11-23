@@ -1,5 +1,6 @@
 import { errorJson, json, publicRoute } from "@/lib/http";
 import { MAX_MEDIA_BYTES, uploadMedia } from "@/lib/repo";
+import { isTreasurer } from "@/lib/auth";
 import { allowRequest } from "@/lib/rateLimit";
 import { uuid, uuidOrNull } from "@/lib/validation";
 
@@ -30,10 +31,13 @@ export const POST = publicRoute(async (req: Request) => {
   const mime = sniff(data);
   if (!mime) return errorJson("Only JPEG, PNG or WebP images are allowed", 415);
 
-  const kind = form.get("kind") === "avatar" ? "avatar" : "photo";
+  const k = form.get("kind");
+  const kind = k === "avatar" ? "avatar" : k === "receipt" ? "receipt" : "photo";
+  // Receipts belong to expenses, which only the Treasurer can log.
+  if (kind === "receipt" && !(await isTreasurer())) return errorJson("Treasurer Mode required", 401);
   const thumbFile = form.get("thumb");
   let thumb: Buffer | null = null;
-  if (kind === "photo" && thumbFile instanceof File && thumbFile.size <= 300_000) {
+  if (kind !== "avatar" && thumbFile instanceof File && thumbFile.size <= 300_000) {
     const t = Buffer.from(await thumbFile.arrayBuffer());
     if (sniff(t) === "image/jpeg") thumb = t;
   }

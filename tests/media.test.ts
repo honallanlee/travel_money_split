@@ -48,3 +48,28 @@ describe("photos go to file storage, avatars stay in the database", () => {
     expect(await getStore().getObject(path)).toBeNull();
   });
 });
+
+import { createTransaction, deleteTransaction, updateTransaction } from "@/lib/repo";
+
+describe("receipts linked to transactions", () => {
+  it("links a receipt, rejects foreign links, and deletes the file when no entry uses it", async () => {
+    const trip = await createTrip({ name: "Receipt test" });
+    const p = await createParticipant({ trip_id: trip.id, name: "Sam" });
+    const r = await uploadMedia({ trip_id: trip.id, kind: "receipt", participant_id: null, mime: "image/jpeg", data: jpeg(900), thumb: jpeg(90), width: 1, height: 1, caption: "", uploaded_by: "" });
+    const [row] = await getStore().select<{ storage_path: string }>("media", { id: r.id });
+    expect(row.storage_path).toBe(`${trip.id}/receipts/${r.id}.jpg`);
+    const base = { trip_id: trip.id, type: "CASH_EXPENSE", title: "Lunch", category: "Food & Drink", amount_local: 1000, currency: "JPY", occurred_at: "2026-12-13", splits: [{ participant_id: p.id, share_amount_base: 1000 }] };
+    await expect(createTransaction({ ...base, receipt_url: "https://evil.example/x.jpg" })).rejects.toThrow(/receipt/);
+    const tx = await createTransaction({ ...base, receipt_url: `/api/media/${r.id}` });
+    expect(tx.receipt_url).toBe(`/api/media/${r.id}`);
+    // removing the receipt from the entry deletes the file
+    await updateTransaction(tx.id, { ...base, receipt_url: null });
+    expect(await getStore().getObject(row.storage_path)).toBeNull();
+    // deleting an entry deletes its receipt
+    const r2 = await uploadMedia({ trip_id: trip.id, kind: "receipt", participant_id: null, mime: "image/jpeg", data: jpeg(900), width: 1, height: 1, caption: "", uploaded_by: "" });
+    const tx2 = await createTransaction({ ...base, receipt_url: `/api/media/${r2.id}` });
+    await deleteTransaction(tx2.id);
+    expect(await getMedia(r2.id)).toBeNull();
+    await deleteTrip(trip.id);
+  });
+});

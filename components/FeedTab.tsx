@@ -1,5 +1,5 @@
 "use client";
-import { CheckCircle2, ChevronDown, Pencil, ReceiptText, Trash2, Users, Wallet } from "lucide-react";
+import { CheckCircle2, ChevronDown, Paperclip, Pencil, ReceiptText, Trash2, Users, Wallet } from "lucide-react";
 import { useMemo, useState } from "react";
 import { isExpense } from "@/lib/analytics";
 import { formatMoney, round2, type Ledger } from "@/lib/settlement";
@@ -244,6 +244,7 @@ function TxRow({
               </span>
             )}
             {!isTransfer && <span>÷ {tx.splits.length}</span>}
+            {tx.receipt_url && <Paperclip className="h-3.5 w-3.5" aria-label={t("Receipt attached")} />}
           </div>
         </div>
         <div className="text-right">
@@ -274,6 +275,13 @@ function TxRow({
                 </li>
               ))}
             </ul>
+          )}
+          {tx.receipt_url && (
+            <a href={tx.receipt_url} target="_blank" rel="noreferrer" className="flex items-center gap-2.5 rounded-xl bg-surface p-2 ring-1 ring-line">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={`${tx.receipt_url}?size=thumb`} alt={t("Receipt")} loading="lazy" className="h-12 w-12 rounded-lg object-cover" />
+              <span className="text-xs font-medium text-indigo-700">{t("View receipt")}</span>
+            </a>
           )}
           {tx.line_items && tx.line_items.length > 0 && (
             <details className="text-xs text-ink-2">
